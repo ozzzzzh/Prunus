@@ -71,8 +71,32 @@ const getDefaultMarker = (node: PrunusNode, isRoot: boolean): string => {
 };
 
 export const useChatStore = create<ChatState>((set) => ({
-  // 加载 example.json 作为默认示例 session
-  sessions: exampleData.sessions as Record<string, ChatSession>,
+  // 加载 example.json 作为默认示例 session，并添加一个空的 Branch
+  sessions: (() => {
+    const sessions = { ...exampleData.sessions } as Record<string, ChatSession>;
+    // 创建一个空的 session
+    const emptySessionId = generateId();
+    const emptyRootId = generateId();
+    sessions[emptySessionId] = {
+      id: emptySessionId,
+      title: 'New Prunus Branch',
+      nodes: {
+        [emptyRootId]: {
+          id: emptyRootId,
+          parentId: null,
+          childrenIds: [],
+          role: 'system',
+          content: 'Hello, Prunus is ready. The tree begins here.',
+          timestamp: Date.now(),
+          marker: '🌱',
+        },
+      },
+      rootNodeId: emptyRootId,
+      currentNodeId: emptyRootId,
+      createdAt: Date.now(),
+    };
+    return sessions;
+  })(),
   activeSessionId: Object.keys(exampleData.sessions)[0] || null,
   generatingNodeId: null,
   apiConfig: {

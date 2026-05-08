@@ -1,14 +1,64 @@
 @import "tailwindcss";
 
+/* ============================================
+   Prunus Theme - 桃叶阳光
+   设计理念：阳光透过桃叶，温暖而有层次
+   ============================================ */
+
+@theme {
+  /* 自然树叶绿 - 偏暖的黄调绿 */
+  --color-leaf-50: #f7faf6;
+  --color-leaf-100: #eef4ec;
+  --color-leaf-200: #d5e5d1;
+  --color-leaf-300: #b3cfac;
+  --color-leaf-400: #8fb787;
+  --color-leaf-500: #6a9e62;
+  --color-leaf-600: #4a7c44;
+  --color-leaf-700: #3d6538;
+  --color-leaf-800: #345232;
+  --color-leaf-900: #2a4229;
+
+  /* 温暖背景色 - 替代纯白的米色调 */
+  --color-cream-50: #fdfcfa;
+  --color-cream-100: #f9f7f3;
+  --color-cream-200: #f2ede5;
+  --color-cream-300: #e6dfd3;
+
+  /* 深橄榄 - 侧边栏用色 */
+  --color-olive-900: #1a2318;
+  --color-olive-800: #252f22;
+  --color-olive-700: #344232;
+
+  /* 桃粉 - 品牌点缀，少量使用 */
+  --color-blossom: #e8a4b0;
+  --color-blossom-light: #f5d5dc;
+}
+
+/* 基础样式 */
 html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: #f8fafc; /* tailwind slate-50 */
+  background-color: #fafafa;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* Custom Scrollbar for a cleaner look */
+/* 噪点纹理容器 */
+.canvas-texture {
+  position: relative;
+}
+
+.canvas-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.008;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* 自定义滚动条 - 自然色调 */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -17,18 +67,18 @@ html, body, #root {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #b3cfac;
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #8fb787;
 }
 
-/* Markdown Styles */
+/* Markdown 样式 - 文字用深色保证可读性 */
 .prose {
-  color: #334155;
+  color: #1a1a1a;
   font-size: 0.875rem;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 .prose p {
   margin-top: 0.5em;
@@ -42,18 +92,18 @@ html, body, #root {
 }
 .prose strong {
   font-weight: 600;
-  color: #0f172a;
+  color: #0f0f0f;
 }
 .prose code {
-  background-color: #f1f5f9;
+  background-color: #f1f3f0;
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 .prose pre {
-  background-color: #1e293b;
-  color: #e2e8f0;
+  background-color: #2a3528;
+  color: #e8ede6;
   padding: 0.75rem;
   border-radius: 0.5rem;
   overflow-x: auto;

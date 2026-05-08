@@ -75,13 +75,14 @@ export default function ChatInput() {
 
   return (
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-10">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl shadow-[0_8px_30px_-4px_rgba(0,0,0,0.1)] border border-gray-200 overflow-hidden flex flex-col">
         {activeNode && (
-          <div className="bg-slate-50 px-4 py-2 text-xs text-slate-500 border-b border-slate-100 flex items-center gap-2">
+          <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 border-b border-gray-100 flex items-center gap-2">
             <CornerDownLeft size={12} />
             <span>Replying to: </span>
-            <span className="font-medium text-slate-700 truncate max-w-[300px]">
-              {activeNode.content.substring(0, 40)}{activeNode.content.length > 40 ? '...' : ''}
+            <span className="text-gray-600 truncate max-w-[300px]">
+              {activeNode.content.replace(/[#*`_\[\]]/g, '').replace(/\n+/g, ' ').trim().substring(0, 50)}
+              {activeNode.content.length > 50 ? '...' : ''}
             </span>
           </div>
         )}
@@ -108,13 +109,13 @@ export default function ChatInput() {
               }
             }}
             placeholder="Type your message here... (Shift+Enter for new line)"
-            className="flex-1 max-h-40 min-h-[44px] bg-transparent resize-none outline-none py-3 px-3 text-sm text-slate-800 placeholder:text-slate-400 custom-scrollbar"
+            className="flex-1 max-h-40 min-h-[44px] bg-transparent resize-none outline-none py-3 px-3 text-sm text-gray-900 placeholder:text-gray-400 custom-scrollbar"
             rows={1}
           />
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
-            className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded-xl transition-colors mb-1"
+            className="p-3 bg-leaf-600 hover:bg-leaf-700 disabled:bg-leaf-100 disabled:text-leaf-300 text-white rounded-xl transition-colors mb-1"
           >
             {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </button>

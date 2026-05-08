@@ -9,6 +9,8 @@ export interface PrunusNode {
   role: Role;
   content: string;
   timestamp: number;
+  marker?: string; // 节点标记，如 🍃、🍑 等
+  collapsed?: boolean; // 是否收缩
 }
 
 // 新增：会话 (Session) 定义，相当于侧边栏里的一个对话框
@@ -35,36 +37,52 @@ interface ChatState {
     model: string;
   };
   isSettingsOpen: boolean;
+  // 侧边栏收缩状态
+  sidebarCollapsed: boolean;
 
   // Actions
   createSession: () => string;
   switchSession: (sessionId: string) => void;
+  deleteSession: (sessionId: string) => void;
+  renameSession: (sessionId: string, newTitle: string) => void;
   addMessage: (role: Role, content: string, parentId?: string) => string;
   addBranchedMessages: (role: Role, contents: string[], parentId?: string) => void;
   splitNodeIntoBranches: (nodeId: string, newOutlineContent: string, branchesContent: string[]) => void;
   focusNode: (nodeId: string) => void;
+  setNodeMarker: (nodeId: string, marker: string | undefined) => void;
+  toggleNodeCollapse: (nodeId: string) => void;
+  updateNodeMarkers: (sessionId: string) => void;
   updateApiConfig: (config: Partial<ChatState['apiConfig']>) => void;
   toggleSettings: (isOpen: boolean) => void;
+  toggleSidebar: (collapsed: boolean) => void;
   setGeneratingNodeId: (nodeId: string | null) => void;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+// 根据 childrenIds 判断应该使用的默认标记
+const getDefaultMarker = (node: PrunusNode, isRoot: boolean): string => {
+  if (isRoot) return '🌱';
+  if (node.childrenIds.length > 0) return '🪵';
+  return '🍃';
+};
 
 export const useChatStore = create<ChatState>((set) => ({
   sessions: {},
   activeSessionId: null,
   generatingNodeId: null,
   apiConfig: {
-    apiKey: '',
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
+    apiKey: 'sk-sp-q42V1XVXEx6Ytf8y8yE0DAC5AnydYaNhBP0qIK8lrliEVg5b',
+    baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
+    model: 'glm-5',
   },
   isSettingsOpen: false,
+  sidebarCollapsed: false,
 
   createSession: () => {
     const sessionId = generateId();
     const rootId = generateId();
-    
+
     const systemNode: PrunusNode = {
       id: rootId,
       parentId: null,
@@ -72,11 +90,12 @@ export const useChatStore = create<ChatState>((set) => ({
       role: 'system',
       content: 'Hello, Prunus is ready. The tree begins here.',
       timestamp: Date.now(),
+      marker: '🌱', // 根节点自动标记为 Seed
     };
 
     const newSession: ChatSession = {
       id: sessionId,
-      title: 'New Prunus Branch', // 默认标题，后续可以让 AI 根据内容自动生成
+      title: 'New Prunus Branch',
       nodes: { [rootId]: systemNode },
       rootNodeId: rootId,
       currentNodeId: rootId,
@@ -95,6 +114,32 @@ export const useChatStore = create<ChatState>((set) => ({
     set({ activeSessionId: sessionId });
   },
 
+  deleteSession: (sessionId) => {
+    set((state) => {
+      const { [sessionId]: deleted, ...remainingSessions } = state.sessions;
+      const newActiveId = state.activeSessionId === sessionId
+        ? Object.keys(remainingSessions)[0] || null
+        : state.activeSessionId;
+      return {
+        sessions: remainingSessions,
+        activeSessionId: newActiveId,
+      };
+    });
+  },
+
+  renameSession: (sessionId, newTitle) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...session, title: newTitle },
+        },
+      };
+    });
+  },
+
   addMessage: (role, content, customParentId) => {
     let createdNodeId = '';
     set((state) => {
@@ -102,13 +147,13 @@ export const useChatStore = create<ChatState>((set) => ({
       if (!activeSessionId) return state;
 
       const currentSession = sessions[activeSessionId];
-      // 优先使用传入的 customParentId，否则使用当前聚焦的节点作为父节点
       const parentId = customParentId || currentSession.currentNodeId;
       if (!parentId || !currentSession.nodes[parentId]) return state;
 
       const newNodeId = generateId();
       createdNodeId = newNodeId;
-      
+
+      // 新节点默认标记为 Leaf（末端节点）
       const newNode: PrunusNode = {
         id: newNodeId,
         parentId,
@@ -116,11 +161,16 @@ export const useChatStore = create<ChatState>((set) => ({
         role,
         content,
         timestamp: Date.now(),
+        marker: '🍃',
       };
 
+      // 更新父节点：添加子节点，标记改为 Trunk（如果之前是 Leaf）
+      const parentNode = currentSession.nodes[parentId];
+      const parentMarker = parentNode.marker === '🍃' ? '🪵' : parentNode.marker;
       const updatedParent = {
-        ...currentSession.nodes[parentId],
-        childrenIds: [...currentSession.nodes[parentId].childrenIds, newNodeId],
+        ...parentNode,
+        childrenIds: [...parentNode.childrenIds, newNodeId],
+        marker: parentMarker,
       };
 
       const updatedSession: ChatSession = {
@@ -130,7 +180,6 @@ export const useChatStore = create<ChatState>((set) => ({
           [parentId]: updatedParent,
           [newNodeId]: newNode,
         },
-        // 添加新消息后，自动将焦点切换到新节点上
         currentNodeId: newNodeId,
       };
 
@@ -146,7 +195,7 @@ export const useChatStore = create<ChatState>((set) => ({
   },
 
   addBranchedMessages: (role, contents, targetParentId) => {
-    set((state) => { 
+    set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
 
@@ -166,13 +215,18 @@ export const useChatStore = create<ChatState>((set) => ({
           role,
           content,
           timestamp: Date.now(),
+          marker: '🍃', // 新节点默认为 Leaf
         };
         newChildrenIds.push(newNodeId);
       });
 
+      // 更新父节点标记
+      const parentNode = currentSession.nodes[parentId];
+      const parentMarker = parentNode.marker === '🍃' ? '🪵' : parentNode.marker;
       const updatedParent = {
-        ...currentSession.nodes[parentId],
-        childrenIds: [...currentSession.nodes[parentId].childrenIds, ...newChildrenIds],
+        ...parentNode,
+        childrenIds: [...parentNode.childrenIds, ...newChildrenIds],
+        marker: parentMarker,
       };
 
       const updatedSession: ChatSession = {
@@ -182,7 +236,6 @@ export const useChatStore = create<ChatState>((set) => ({
           ...newNodes,
           [parentId]: updatedParent,
         },
-        // 默认聚焦到第一个生成的分支
         currentNodeId: newChildrenIds[0],
       };
 
@@ -213,20 +266,22 @@ export const useChatStore = create<ChatState>((set) => ({
         const newNodeId = generateId();
         newNodes[newNodeId] = {
           id: newNodeId,
-          parentId: nodeId, // 以当前节点为父节点
+          parentId: nodeId,
           childrenIds: [],
-          role: targetNode.role, // 继承原来的角色（通常是 assistant）
+          role: targetNode.role,
           content,
           timestamp: Date.now(),
+          marker: '🍃', // 新分支默认为 Leaf
         };
         newChildrenIds.push(newNodeId);
       });
 
-      // 更新 targetNode (保留在原位置，内容替换为大纲，添加新的 childrenIds)
+      // 更新 targetNode：添加子节点，标记改为 Trunk
       const updatedTargetNode = {
         ...targetNode,
         content: newOutlineContent,
         childrenIds: [...targetNode.childrenIds, ...newChildrenIds],
+        marker: '🪵', // 有子节点则为 Trunk
       };
 
       const updatedSession: ChatSession = {
@@ -236,7 +291,6 @@ export const useChatStore = create<ChatState>((set) => ({
           ...newNodes,
           [nodeId]: updatedTargetNode,
         },
-        // 焦点切到第一个新裂变出来的分支上
         currentNodeId: newChildrenIds[0] || currentSession.currentNodeId,
       };
 
@@ -275,6 +329,99 @@ export const useChatStore = create<ChatState>((set) => ({
     });
   },
 
+  setNodeMarker: (nodeId, marker) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const targetNode = currentSession.nodes[nodeId];
+      if (!targetNode) return state;
+
+      return {
+        ...state,
+        sessions: {
+          ...sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: { ...targetNode, marker },
+            },
+          },
+        },
+      };
+    });
+  },
+
+  toggleNodeCollapse: (nodeId) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const targetNode = currentSession.nodes[nodeId];
+      if (!targetNode || !targetNode.marker) return state;
+
+      return {
+        ...state,
+        sessions: {
+          ...sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: {
+                ...targetNode,
+                collapsed: !targetNode.collapsed,
+              },
+            },
+          },
+        },
+      };
+    });
+  },
+
+  updateNodeMarkers: (sessionId) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      const updatedNodes = { ...session.nodes };
+      const rootNodeId = session.rootNodeId;
+
+      Object.values(session.nodes).forEach(node => {
+        const isRoot = node.id === rootNodeId;
+        let newMarker = node.marker;
+
+        // 只自动更新 Seed/Trunk/Leaf，Peach 保持不变
+        if (node.marker !== '🍑') {
+          if (isRoot && node.marker !== '🌱') {
+            newMarker = '🌱';
+          } else if (!isRoot) {
+            if (node.childrenIds.length > 0 && node.marker === '🍃') {
+              newMarker = '🪵';
+            } else if (node.childrenIds.length === 0 && node.marker === '🪵') {
+              newMarker = '🍃';
+            }
+          }
+        }
+
+        if (newMarker !== node.marker) {
+          updatedNodes[node.id] = { ...node, marker: newMarker };
+        }
+      });
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...session, nodes: updatedNodes },
+        },
+      };
+    });
+  },
+
   updateApiConfig: (config) => {
     set((state) => ({
       apiConfig: { ...state.apiConfig, ...config },
@@ -283,6 +430,10 @@ export const useChatStore = create<ChatState>((set) => ({
 
   toggleSettings: (isOpen) => {
     set({ isSettingsOpen: isOpen });
+  },
+
+  toggleSidebar: (collapsed) => {
+    set({ sidebarCollapsed: collapsed });
   },
 
   setGeneratingNodeId: (nodeId) => {

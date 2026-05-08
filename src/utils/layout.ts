@@ -1,22 +1,70 @@
 import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
 
-const nodeWidth = 480;
-// dagre 需要知道每个节点的宽高才能正确计算间距
-// 我们在 UI 里通过 max-h-[300px] 限制了卡片最高 300px，加上 header/padding 大概是 360px 左右
-const nodeMaxHeight = 360; 
+const expandedWidth = 480;
+const collapsedWidth = 56;
+const collapsedHeight = 56;
 
 export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-  // ranksep = 垂直间距 (上下节点之间的连线长度)
-  // nodesep = 水平间距 (左右并排节点之间的距离)
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 40, ranksep: 120 });
+  // 找出有兄弟节点的节点（同一父节点有多个子节点）
+  const siblingGroups: Record<string, string[]> = {}; // parentId -> childrenIds
 
+  edges.forEach(edge => {
+    if (!siblingGroups[edge.source]) {
+      siblingGroups[edge.source] = [];
+    }
+    siblingGroups[edge.source].push(edge.target);
+  });
+
+  // 只统计有多于1个子节点的父节点对应的兄弟组
+  const siblingCount = Object.values(siblingGroups)
+    .filter(children => children.length > 1)
+    .reduce((sum, children) => sum + children.length, 0);
+
+  // 统计这些兄弟节点中有多少是收缩的
+  let collapsedSiblings = 0;
+  Object.values(siblingGroups)
+    .filter(children => children.length > 1)
+    .forEach(children => {
+      children.forEach(childId => {
+        const node = nodes.find(n => n.id === childId);
+        const nodeData = node?.data as { node?: { collapsed?: boolean } };
+        if (nodeData?.node?.collapsed) {
+          collapsedSiblings++;
+        }
+      });
+    });
+
+  const hasSiblings = siblingCount > 0;
+  const siblingCollapseRatio = hasSiblings ? collapsedSiblings / siblingCount : 0;
+
+  // 动态 nodesep 计算：
+  // 目标：全展开中心间距 680px, 全收缩中心间距 280px
+  // 全展开: nodesep = 680 - 480 = 200px
+  // 全收缩: nodesep = 280 - 56 = 224px
+  // 根据 siblingCollapseRatio 在两者之间插值
+  const expandedNodesep = 200;
+  const collapsedNodesep = 224;
+  const nodesep = expandedNodesep + (collapsedNodesep - expandedNodesep) * siblingCollapseRatio;
+
+  // 上下间距
+  const totalCollapsedCount = nodes.filter(node => {
+    const nodeData = node.data as { node?: { collapsed?: boolean } };
+    return nodeData?.node?.collapsed === true;
+  }).length;
+  const ranksep = totalCollapsedCount / Math.max(nodes.length, 1) > 0.5 ? 70 : 150;
+
+  dagreGraph.setGraph({ rankdir: direction, nodesep, ranksep });
+
+  // 根据收缩状态分配不同宽度
   nodes.forEach((node) => {
-    // 强制 dagre 把所有节点当成最大高度来排版，这样即使内容很长也不会和下面的节点重叠
-    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeMaxHeight });
+    const nodeData = node.data as { node?: { collapsed?: boolean } };
+    const isCollapsed = nodeData?.node?.collapsed === true;
+    const width = isCollapsed ? collapsedWidth : expandedWidth;
+    dagreGraph.setNode(node.id, { width, height: collapsedHeight });
   });
 
   edges.forEach((edge) => {
@@ -27,11 +75,16 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'T
 
   const layoutedNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
+
+    // 使用收缩宽度计算左边缘位置，确保展开时节点向右扩展
+    // 左边缘位置 = dagre中心点 - 收缩宽度/2
+    const leftEdgeX = nodeWithPosition.x - collapsedWidth / 2;
+
     return {
       ...node,
       position: {
-        x: nodeWithPosition.x - nodeWidth / 2,
-        y: nodeWithPosition.y - nodeMaxHeight / 2,
+        x: leftEdgeX,
+        y: nodeWithPosition.y - collapsedHeight / 2,
       },
     };
   });

@@ -9,6 +9,7 @@ import { useChatStore } from './store/chatStore';
 function App() {
   const sessions = useChatStore(state => state.sessions);
   const createSession = useChatStore(state => state.createSession);
+  const sidebarCollapsed = useChatStore(state => state.sidebarCollapsed);
 
   // Initialize a session if none exists
   useEffect(() => {
@@ -18,9 +19,9 @@ function App() {
   }, [sessions, createSession]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-[#fafafa] text-gray-900">
       <Sidebar />
-      <main className="flex-1 relative flex flex-col h-full overflow-hidden">
+      <main className={`absolute top-0 right-0 bottom-0 flex flex-col h-full overflow-hidden transition-all duration-300 ${sidebarCollapsed ? 'left-0' : 'left-64'}`}>
         <ReactFlowProvider>
           <ChatCanvas />
         </ReactFlowProvider>

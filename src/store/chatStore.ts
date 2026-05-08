@@ -164,13 +164,14 @@ export const useChatStore = create<ChatState>((set) => ({
         marker: '🍃',
       };
 
-      // 更新父节点：添加子节点，标记改为 Trunk（如果之前是 Leaf）
+      // 更新父节点：添加子节点，标记改为 Trunk（如果之前是 Leaf），并确保展开
       const parentNode = currentSession.nodes[parentId];
       const parentMarker = parentNode.marker === '🍃' ? '🪵' : parentNode.marker;
       const updatedParent = {
         ...parentNode,
         childrenIds: [...parentNode.childrenIds, newNodeId],
         marker: parentMarker,
+        collapsed: false, // 添加子节点时自动展开父节点
       };
 
       const updatedSession: ChatSession = {
@@ -220,13 +221,14 @@ export const useChatStore = create<ChatState>((set) => ({
         newChildrenIds.push(newNodeId);
       });
 
-      // 更新父节点标记
+      // 更新父节点标记，并确保展开
       const parentNode = currentSession.nodes[parentId];
       const parentMarker = parentNode.marker === '🍃' ? '🪵' : parentNode.marker;
       const updatedParent = {
         ...parentNode,
         childrenIds: [...parentNode.childrenIds, ...newChildrenIds],
         marker: parentMarker,
+        collapsed: false, // 添加子节点时自动展开父节点
       };
 
       const updatedSession: ChatSession = {

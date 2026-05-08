@@ -2,6 +2,7 @@ import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
 
 const expandedWidth = 480;
+const expandedHeight = 350; // 展开节点的估算高度
 const collapsedWidth = 56;
 const collapsedHeight = 56;
 
@@ -59,12 +60,13 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'T
 
   dagreGraph.setGraph({ rankdir: direction, nodesep, ranksep });
 
-  // 根据收缩状态分配不同宽度
+  // 根据收缩状态分配不同宽度和高度
   nodes.forEach((node) => {
     const nodeData = node.data as { node?: { collapsed?: boolean } };
     const isCollapsed = nodeData?.node?.collapsed === true;
     const width = isCollapsed ? collapsedWidth : expandedWidth;
-    dagreGraph.setNode(node.id, { width, height: collapsedHeight });
+    const height = isCollapsed ? collapsedHeight : expandedHeight;
+    dagreGraph.setNode(node.id, { width, height });
   });
 
   edges.forEach((edge) => {
@@ -80,6 +82,7 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'T
     // 左边缘位置 = dagre中心点 - 收缩宽度/2
     const leftEdgeX = nodeWithPosition.x - collapsedWidth / 2;
 
+    // Y 坐标始终使用 collapsedHeight 计算，确保展开时节点顶部位置不变（向下展开）
     return {
       ...node,
       position: {

@@ -8,6 +8,16 @@ import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { useState, useRef, useEffect } from 'react';
 
+// 预处理 markdown 文本，修复中文引号与加粗/斜体语法混用的问题
+const preprocessMarkdown = (text: string): string => {
+  // 将中文引号转换为英文引号，让 markdown 解析器正确处理加粗/斜体
+  return text
+    .replace(/"/g, '"')
+    .replace(/"/g, '"')
+    .replace(/'/g, "'")
+    .replace(/'/g, "'");
+};
+
 // 可用的标记选项
 const MARKER_OPTIONS = [
   { emoji: '🍃', label: 'Leaf' },
@@ -241,7 +251,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
         >
           <div className="prose prose-sm w-full max-w-none break-words pointer-events-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {node.content}
+              {preprocessMarkdown(node.content)}
             </ReactMarkdown>
           </div>
         </div>

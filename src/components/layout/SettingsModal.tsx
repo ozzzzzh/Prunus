@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X, Download, Upload } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 
 export default function SettingsModal() {
@@ -6,6 +6,19 @@ export default function SettingsModal() {
   const toggleSettings = useChatStore(state => state.toggleSettings);
   const apiConfig = useChatStore(state => state.apiConfig);
   const updateApiConfig = useChatStore(state => state.updateApiConfig);
+  const sessions = useChatStore(state => state.sessions);
+
+  // 导出 sessions 为 JSON 文件
+  const handleExport = () => {
+    const data = JSON.stringify({ sessions }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prunus-sessions-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (!isSettingsOpen) return null;
 
@@ -55,6 +68,22 @@ export default function SettingsModal() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-leaf-400 focus:border-transparent text-sm bg-gray-50"
             />
           </div>
+        </div>
+
+        <div className="mt-6 pt-6 border-t border-gray-100">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Data Management</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={handleExport}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors text-sm"
+            >
+              <Download size={16} />
+              Export Data
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-2">
+            Export your conversation tree as JSON file
+          </p>
         </div>
 
         <div className="mt-8 flex justify-end">

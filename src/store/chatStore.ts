@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import exampleData from '../example.json';
 
 export type Role = 'user' | 'assistant' | 'system';
 
@@ -21,6 +22,7 @@ export interface ChatSession {
   rootNodeId: string | null;
   currentNodeId: string | null;
   createdAt: number;
+  pinned?: boolean; // 是否置顶
 }
 
 interface ChatState {
@@ -45,6 +47,7 @@ interface ChatState {
   switchSession: (sessionId: string) => void;
   deleteSession: (sessionId: string) => void;
   renameSession: (sessionId: string, newTitle: string) => void;
+  togglePinSession: (sessionId: string) => void;
   addMessage: (role: Role, content: string, parentId?: string) => string;
   addBranchedMessages: (role: Role, contents: string[], parentId?: string) => void;
   splitNodeIntoBranches: (nodeId: string, newOutlineContent: string, branchesContent: string[]) => void;
@@ -68,8 +71,9 @@ const getDefaultMarker = (node: PrunusNode, isRoot: boolean): string => {
 };
 
 export const useChatStore = create<ChatState>((set) => ({
-  sessions: {},
-  activeSessionId: null,
+  // 加载 example.json 作为默认示例 session
+  sessions: exampleData.sessions as Record<string, ChatSession>,
+  activeSessionId: Object.keys(exampleData.sessions)[0] || null,
   generatingNodeId: null,
   apiConfig: {
     apiKey: 'sk-sp-q42V1XVXEx6Ytf8y8yE0DAC5AnydYaNhBP0qIK8lrliEVg5b',
@@ -135,6 +139,19 @@ export const useChatStore = create<ChatState>((set) => ({
         sessions: {
           ...state.sessions,
           [sessionId]: { ...session, title: newTitle },
+        },
+      };
+    });
+  },
+
+  togglePinSession: (sessionId) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...session, pinned: !session.pinned },
         },
       };
     });

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, MessageSquare, Settings, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
+import { Plus, MessageSquare, Settings, ChevronLeft, ChevronRight, Pencil, Trash2, Pin } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { cn } from '../../utils/cn';
 
@@ -10,6 +10,7 @@ export default function Sidebar() {
   const switchSession = useChatStore(state => state.switchSession);
   const deleteSession = useChatStore(state => state.deleteSession);
   const renameSession = useChatStore(state => state.renameSession);
+  const togglePinSession = useChatStore(state => state.togglePinSession);
   const toggleSettings = useChatStore(state => state.toggleSettings);
   const sidebarCollapsed = useChatStore(state => state.sidebarCollapsed);
   const toggleSidebar = useChatStore(state => state.toggleSidebar);
@@ -23,7 +24,10 @@ export default function Sidebar() {
   const [editingTitle, setEditingTitle] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // 分离置顶和非置顶的 session
   const sessionList = Object.values(sessions).sort((a, b) => b.createdAt - a.createdAt);
+  const pinnedSessions = sessionList.filter(s => s.pinned);
+  const unpinnedSessions = sessionList.filter(s => !s.pinned);
 
   // 点击其他地方关闭右键菜单
   useEffect(() => {
@@ -56,6 +60,13 @@ export default function Sidebar() {
   const handleDelete = () => {
     if (contextMenu) {
       deleteSession(contextMenu.sessionId);
+      setContextMenu(null);
+    }
+  };
+
+  const handlePin = () => {
+    if (contextMenu) {
+      togglePinSession(contextMenu.sessionId);
       setContextMenu(null);
     }
   };
@@ -117,50 +128,100 @@ export default function Sidebar() {
 
         {/* Branch Session 列表区域 */}
         <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
-          <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wider px-3 py-2">
-            Branches
-          </div>
-          <div className="space-y-0.5">
-            {sessionList.map(session => (
-              <div
-                key={session.id}
-                onClick={() => switchSession(session.id)}
-                onContextMenu={(e) => handleContextMenu(e, session.id)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm group",
-                  activeSessionId === session.id
-                    ? "bg-leaf-50 text-gray-800 font-medium"
-                    : "text-gray-600 hover:bg-gray-50"
-                )}
-              >
-                <MessageSquare size={16} className={activeSessionId === session.id ? "text-leaf-600" : "text-gray-300"} />
-                {editingSessionId === session.id ? (
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
-                    onBlur={handleSaveRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveRename();
-                      if (e.key === 'Escape') {
-                        setEditingSessionId(null);
-                        setEditingTitle('');
-                      }
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex-1 bg-white border border-leaf-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-leaf-400"
-                  />
-                ) : (
-                  <span className="flex-1 truncate">{session.title}</span>
-                )}
+          {/* 置顶区域 */}
+          {pinnedSessions.length > 0 && (
+            <div className="mb-4">
+              <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wider px-3 py-2 flex items-center gap-1">
+                <Pin size={10} />
+                Pinned
               </div>
-            ))}
-            {sessionList.length === 0 && (
-              <div className="text-center text-gray-400 text-sm mt-6 px-4 py-4">
-                No branches yet.<br />Plant a new seed to start.
+              <div className="space-y-0.5">
+                {pinnedSessions.map(session => (
+                  <div
+                    key={session.id}
+                    onClick={() => switchSession(session.id)}
+                    onContextMenu={(e) => handleContextMenu(e, session.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm group",
+                      activeSessionId === session.id
+                        ? "bg-leaf-50 text-gray-800 font-medium"
+                        : "text-gray-600 hover:bg-gray-50"
+                    )}
+                  >
+                    <MessageSquare size={16} className={activeSessionId === session.id ? "text-leaf-600" : "text-gray-300"} />
+                    {editingSessionId === session.id ? (
+                      <input
+                        ref={inputRef}
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={handleSaveRename}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveRename();
+                          if (e.key === 'Escape') {
+                            setEditingSessionId(null);
+                            setEditingTitle('');
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 bg-white border border-leaf-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-leaf-400"
+                      />
+                    ) : (
+                      <span className="flex-1 truncate">{session.title}</span>
+                    )}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+          )}
+
+          {/* 普通区域 */}
+          <div>
+            <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wider px-3 py-2">
+              Branches
+            </div>
+            <div className="space-y-0.5">
+              {unpinnedSessions.map(session => (
+                <div
+                  key={session.id}
+                  onClick={() => switchSession(session.id)}
+                  onContextMenu={(e) => handleContextMenu(e, session.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm group",
+                    activeSessionId === session.id
+                      ? "bg-leaf-50 text-gray-800 font-medium"
+                      : "text-gray-600 hover:bg-gray-50"
+                  )}
+                >
+                  <MessageSquare size={16} className={activeSessionId === session.id ? "text-leaf-600" : "text-gray-300"} />
+                  {editingSessionId === session.id ? (
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onBlur={handleSaveRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename();
+                        if (e.key === 'Escape') {
+                          setEditingSessionId(null);
+                          setEditingTitle('');
+                        }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex-1 bg-white border border-leaf-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-leaf-400"
+                    />
+                  ) : (
+                    <span className="flex-1 truncate">{session.title}</span>
+                  )}
+                </div>
+              ))}
+              {unpinnedSessions.length === 0 && pinnedSessions.length === 0 && (
+                <div className="text-center text-gray-400 text-sm mt-6 px-4 py-4">
+                  No branches yet.<br />Plant a new seed to start.
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -186,6 +247,13 @@ export default function Sidebar() {
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            onClick={handlePin}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <Pin size={14} />
+            {sessions[contextMenu.sessionId]?.pinned ? 'Unpin' : 'Pin'}
+          </button>
           <button
             onClick={handleRename}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"

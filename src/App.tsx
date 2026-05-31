@@ -4,19 +4,27 @@ import Sidebar from './components/layout/Sidebar';
 import ChatCanvas from './components/canvas/ChatCanvas';
 import ChatInput from './components/chat/ChatInput';
 import SettingsModal from './components/layout/SettingsModal';
-import { useChatStore } from './store/chatStore';
+import { useSessionStore } from './store/sessionStore';
+import { useUIStore } from './store/uiStore';
+import { initPersistence, enableAutoSave } from './services/persistenceService';
 
 function App() {
-  const sessions = useChatStore(state => state.sessions);
-  const createSession = useChatStore(state => state.createSession);
-  const sidebarCollapsed = useChatStore(state => state.sidebarCollapsed);
+  const sessions = useSessionStore(state => state.sessions);
+  const createSession = useSessionStore(state => state.createSession);
+  const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed);
 
-  // Initialize a session if none exists
+  // Initialize persistence and create default session if needed
   useEffect(() => {
-    if (Object.keys(sessions).length === 0) {
-      createSession();
-    }
-  }, [sessions, createSession]);
+    // Initialize IndexedDB persistence
+    initPersistence().then(() => {
+      enableAutoSave();
+
+      // Create a session if none exists after loading from persistence
+      if (Object.keys(useSessionStore.getState().sessions).length === 0) {
+        createSession();
+      }
+    });
+  }, [createSession]);
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[#fafafa] text-gray-900">

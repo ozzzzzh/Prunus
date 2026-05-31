@@ -1,11 +1,11 @@
 import OpenAI from 'openai';
-import { useChatStore } from '../store/chatStore';
+import { useAPIConfigStore } from '../store';
 
 export async function generateAIResponse(
   messages: { role: 'user' | 'assistant' | 'system', content: string }[],
   onChunk?: (text: string) => void
 ): Promise<string> {
-  const { apiConfig } = useChatStore.getState();
+  const { config: apiConfig } = useAPIConfigStore.getState();
 
   if (!apiConfig.apiKey) {
     throw new Error('API Key is not configured. Please check settings.');

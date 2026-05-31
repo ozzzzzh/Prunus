@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Send, CornerDownLeft, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
-import type { Role } from '../../store/chatStore';
+import type { Role } from '../../types';
 import { generateAIResponse } from '../../utils/llmApi';
 
 export default function ChatInput() {

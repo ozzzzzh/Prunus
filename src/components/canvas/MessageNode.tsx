@@ -2,7 +2,8 @@ import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { PrunusNode } from '../../store/chatStore';
+import type { PrunusNode, AIChatNode } from '../../types';
+import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
 import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
@@ -74,14 +75,17 @@ export default function MessageNode({ data }: MessageNodeProps) {
     return () => contentEl.removeEventListener('wheel', handleWheelCapture, { capture: true });
   }, [node.collapsed]);
 
-  const isUser = node.role === 'user';
-  const isSystem = node.role === 'system';
+  // 使用类型守卫判断节点类型
+  const isAIChat = isAIChatNode(node);
+  const role = isAIChat ? node.role : null;
+  const isUser = role === 'user';
+  const isSystem = role === 'system';
 
   // 只有 AI 或 System 节点，且不是当前高亮节点时，才允许被点击聚焦
   const isClickable = !isActive && !isUser;
 
   // 检查是否可以手动裂变：必须是 AI 回复，且当前节点还没有被拆分过
-  const canSplit = !isUser && !isSystem && node.childrenIds.length === 0 && !isSplitting;
+  const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
 
   // 判断当前节点是否正在等待 AI 回复
   const isWaitingForAI = isUser && generatingNodeId === node.id;

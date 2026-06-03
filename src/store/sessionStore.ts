@@ -63,9 +63,11 @@ const initializeSessions = (): Record<string, ChatSession> => {
   if (exampleData.sessions) {
     for (const [sessionId, legacySession] of Object.entries(exampleData.sessions) as [string, any][]) {
       const migratedNodes: Record<string, PrunusNode> = {};
-
+      // 将exampleData.sessions 转换为键值对数组类型并解构为sessionId和legacySession的键值对数组进行遍历
       for (const [nodeId, legacyNode] of Object.entries(legacySession.nodes) as [string, LegacyNode][]) {
+        // 将legacySession.nodes 转换为键值对数组类型并解构为nodeId和legacyNode的键值对数组进行遍历
         migratedNodes[nodeId] = migrateNode(legacyNode);
+        // 迁移到migratedNodes中，键为nodeId，值为迁移后的节点对象
       }
 
       sessions[sessionId] = {
@@ -104,7 +106,7 @@ const initializeSessions = (): Record<string, ChatSession> => {
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: initializeSessions(),
   activeSessionId: Object.keys(exampleData.sessions || {})[0] || null,
-
+  // 取第一个exampleData.sessions的键作为初始activeSessionId，如果没有则为null
   // ===== 会话操作 =====
 
   createSession: () => {
@@ -141,7 +143,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const newActiveId = state.activeSessionId === sessionId
         ? Object.keys(remainingSessions)[0] || null
         : state.activeSessionId;
-
+        // 如果删掉了目前正在阅读的sessionid则默认激活下一个session
       return {
         sessions: remainingSessions,
         activeSessionId: newActiveId,

@@ -171,7 +171,12 @@ export default function MessageNode({ data }: MessageNodeProps) {
             onClick={handleCollapseClick}
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
-            className="w-14 h-14 rounded-full bg-white shadow-lg border-2 border-gray-200 flex items-center justify-center cursor-pointer hover:scale-110 hover:border-leaf-300 transition-transform duration-200"
+            className={cn(
+              "w-14 h-14 rounded-full bg-white shadow-lg border-2 flex items-center justify-center cursor-pointer transition-transform duration-200",
+              isActive
+                ? "scale-110 border-leaf-400 shadow-xl"
+                : "border-gray-200 hover:scale-110 hover:border-leaf-300"
+            )}
             title="Click to expand"
           >
             <span className="text-2xl">{node.marker}</span>
@@ -239,7 +244,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
           </div>
         )}
 
-        <Handle type="target" position={Position.Top} className="w-2 h-2 opacity-0" />
+        <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
 
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2 pointer-events-none">
@@ -325,7 +330,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
           </div>
         </div>
 
-        <Handle type="source" position={Position.Bottom} className="w-2 h-2 opacity-0" />
+        <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
       </div>
 
       <NodeToolbar

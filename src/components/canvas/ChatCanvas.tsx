@@ -69,7 +69,7 @@ export default function ChatCanvas() {
           source: node.id,
           target: childId,
           animated: isEdgeActive,
-          zIndex: 5, // 让连线在非活跃节点之上
+          zIndex: 5,
           style: {
             stroke: isEdgeActive ? '#6a9e62' : '#8b7355',
             strokeWidth: isEdgeActive ? 2 : 1.5,

@@ -1,7 +1,10 @@
 import { useState, useRef } from 'react';
 import { Send, CornerDownLeft, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
-import type { Role } from '../../types';
+import { useGenerationStore } from '../../store/generationStore';
+import { useSessionStore } from '../../store/sessionStore';
+import type { AIRole } from '../../types';
+import { isAIChatNode } from '../../types';
 import { generateAIResponse } from '../../utils/llmApi';
 
 export default function ChatInput() {
@@ -21,46 +24,55 @@ export default function ChatInput() {
     if (!input.trim() || !activeSessionId || isLoading) return;
 
     const messageContent = input.trim();
-    // 立即清空输入框
     setInput('');
-    
-    // 发送用户消息并获取生成的节点ID
+
     const userNodeId = addMessage('user', messageContent);
     setIsLoading(true);
     setGeneratingNodeId(userNodeId);
 
     try {
-      // 收集当前分支的历史上下文（修复遗忘现象）
-      // 注意：使用最新的 store 状态，并从刚生成的用户节点开始追溯
       const latestState = useChatStore.getState();
       const currentSession = latestState.sessions[activeSessionId];
-      
-      const history: { role: Role, content: string }[] = [];
+
+      const history: { role: AIRole, content: string }[] = [];
       let currId: string | null = userNodeId || currentSession.currentNodeId;
 
-      // 沿着 parentId 一直往上追溯到根节点，收集这条分支上所有的对话
       while (currId && currentSession.nodes[currId]) {
         const node = currentSession.nodes[currId];
-        // 过滤掉系统内部生成的空提示节点（如果有）
-        if (node.content && node.role !== 'system') {
+        if (node.content && isAIChatNode(node) && node.role !== 'system') {
           history.unshift({ role: node.role, content: node.content });
         }
         currId = node.parentId;
       }
 
-      // 如果有系统提示，强制加在最前面
-      history.unshift({ 
-        role: 'system', 
-        content: 'You are a helpful AI assistant. Provide structured, clear, and concise answers.' 
+      history.unshift({
+        role: 'system',
+        content: 'You are a helpful AI assistant. Provide structured, clear, and concise answers.'
       });
 
-      // 请求 LLM API，带上完整的历史链条
-      const aiResponse = await generateAIResponse(history);
+      // 先创建空的 assistant 节点
+      const aiNodeId = useSessionStore.getState().addMessage('assistant', '', userNodeId);
 
-      // 直接将 AI 回复作为一个完整的节点添加，不再自动裂变
-      // 这里的 addMessage 现在显式传入 userNodeId 作为 parentId，
-      // 修复了在等待过程中点选其他卡片导致回答挂载错乱的 bug。
-      useChatStore.getState().addMessage('assistant', aiResponse, userNodeId);
+      // 用 generationStore 暂存流式内容
+      const genStore = useGenerationStore.getState();
+      genStore.setGeneratingNodeId(aiNodeId);
+
+      await generateAIResponse(history, (chunk) => {
+        // 检测是否在 reasoning（有 reasoning_content 但 content 为空）
+        const isReasoning = chunk.reasoning && chunk.reasoning.length > 0 && !chunk.content;
+        genStore.setIsReasoning(isReasoning);
+        genStore.appendStreamingContent(chunk.content);
+      });
+
+      // 流结束后一次性写入 sessionStore
+      // 注意：要用 getState() 获取最新状态，不能用之前的快照
+      const finalContent = useGenerationStore.getState().streamingContent;
+      useSessionStore.getState().updateNodeContent(aiNodeId, finalContent);
+
+      // 延迟 reset，确保 React 渲染完成后再清空
+      setTimeout(() => {
+        useGenerationStore.getState().reset();
+      }, 100);
 
     } catch (error: unknown) {
       const err = error as Error;

@@ -3,8 +3,8 @@ import { useAPIConfigStore } from '../store';
 
 export async function generateAIResponse(
   messages: { role: 'user' | 'assistant' | 'system', content: string }[],
-  onChunk?: (text: string) => void
-): Promise<string> {
+  onChunk?: (data: { content: string; reasoning?: string }) => void
+): Promise<{ content: string; reasoning: string }> {
   const { config: apiConfig } = useAPIConfigStore.getState();
 
   if (!apiConfig.apiKey) {
@@ -42,20 +42,22 @@ export async function generateAIResponse(
       model: apiConfig.model.trim() || 'gpt-3.5-turbo',
       messages: messages,
       stream: true,
-      // 降低温度，让分点更明确
       temperature: 0.7,
     });
 
-    let fullResponse = '';
+    let fullContent = '';
+    let fullReasoning = '';
     for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || '';
-      fullResponse += text;
+      const content = chunk.choices[0]?.delta?.content || '';
+      const reasoning = chunk.choices[0]?.delta?.reasoning_content || '';
+      fullContent += content;
+      fullReasoning += reasoning;
       if (onChunk) {
-        onChunk(text);
+        onChunk({ content, reasoning });
       }
     }
 
-    return fullResponse;
+    return { content: fullContent, reasoning: fullReasoning };
   } catch (error: unknown) {
     console.error('LLM API Error:', error);
     

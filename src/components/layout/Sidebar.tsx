@@ -1,19 +1,24 @@
 import { useState, useRef, useEffect } from 'react';
 import { Plus, MessageSquare, Settings, ChevronLeft, ChevronRight, Pencil, Trash2, Pin } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
+import { useSessionStore } from '../../store/sessionStore';
+import { useUIStore } from '../../store/uiStore';
 import { cn } from '../../utils/cn';
 
 export default function Sidebar() {
-  const sessions = useChatStore(state => state.sessions);
-  const activeSessionId = useChatStore(state => state.activeSessionId);
-  const createSession = useChatStore(state => state.createSession);
-  const switchSession = useChatStore(state => state.switchSession);
-  const deleteSession = useChatStore(state => state.deleteSession);
-  const renameSession = useChatStore(state => state.renameSession);
-  const togglePinSession = useChatStore(state => state.togglePinSession);
-  const toggleSettings = useChatStore(state => state.toggleSettings);
-  const sidebarCollapsed = useChatStore(state => state.sidebarCollapsed);
-  const toggleSidebar = useChatStore(state => state.toggleSidebar);
+  // 直接订阅 sessionStore，避免 chatStore getter 的问题
+  const sessions = useSessionStore(state => state.sessions);
+  const activeSessionId = useSessionStore(state => state.activeSessionId);
+  const createSession = useSessionStore(state => state.createSession);
+  const switchSession = useSessionStore(state => state.switchSession);
+  const deleteSession = useSessionStore(state => state.deleteSession);
+  const renameSession = useSessionStore(state => state.renameSession);
+  const togglePinSession = useSessionStore(state => state.togglePinSession);
+
+  // UI 状态从 uiStore 订阅
+  const toggleSettings = useUIStore(state => state.toggleSettings);
+  const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed);
+  const toggleSidebar = useUIStore(state => state.toggleSidebar);
 
   const [contextMenu, setContextMenu] = useState<{
     sessionId: string;

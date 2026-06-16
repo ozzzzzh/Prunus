@@ -32,9 +32,11 @@ ${content}
       { role: 'system', content: 'You are a helpful JSON parser.' },
       { role: 'user', content: prompt }
     ]);
+    // aiParser 只需要 content，不需要 reasoning
+    const responseText = response.content;
 
     // 尝试从返回内容中提取 JSON 对象（防止 AI 带有 markdown code block 等杂质）
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (parsed.outline !== undefined && Array.isArray(parsed.branches)) {

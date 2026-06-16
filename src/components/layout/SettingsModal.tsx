@@ -1,12 +1,15 @@
 import { X, Download, Upload } from 'lucide-react';
-import { useChatStore } from '../../store/chatStore';
+import { useUIStore } from '../../store/uiStore';
+import { useAPIConfigStore } from '../../store/apiConfigStore';
+import { useSessionStore } from '../../store/sessionStore';
 
 export default function SettingsModal() {
-  const isSettingsOpen = useChatStore(state => state.isSettingsOpen);
-  const toggleSettings = useChatStore(state => state.toggleSettings);
-  const apiConfig = useChatStore(state => state.apiConfig);
-  const updateApiConfig = useChatStore(state => state.updateApiConfig);
-  const sessions = useChatStore(state => state.sessions);
+  // 直接订阅各 store，避免 chatStore getter 的问题
+  const isSettingsOpen = useUIStore(state => state.isSettingsOpen);
+  const toggleSettings = useUIStore(state => state.toggleSettings);
+  const apiConfig = useAPIConfigStore(state => state.config);
+  const updateApiConfig = useAPIConfigStore(state => state.updateConfig);
+  const sessions = useSessionStore(state => state.sessions);
 
   // 导出 sessions 为 JSON 文件
   const handleExport = () => {

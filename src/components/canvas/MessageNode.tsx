@@ -1,17 +1,17 @@
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { PrunusNode, AIChatNode } from '../../types';
+import type { PrunusNode, NodeMarker } from '../../types';
 import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
+import { useSessionStore } from '../../store/sessionStore';
+import { useGenerationStore } from '../../store/generationStore';
 import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { useState, useRef, useEffect } from 'react';
 
-// 预处理 markdown 文本，修复中文引号与加粗/斜体语法混用的问题
 const preprocessMarkdown = (text: string): string => {
-  // 将中文引号转换为英文引号，让 markdown 解析器正确处理加粗/斜体
   return text
     .replace(/"/g, '"')
     .replace(/"/g, '"')
@@ -19,7 +19,6 @@ const preprocessMarkdown = (text: string): string => {
     .replace(/'/g, "'");
 };
 
-// 可用的标记选项
 const MARKER_OPTIONS = [
   { emoji: '🍃', label: 'Leaf' },
   { emoji: '🍑', label: 'Peach' },
@@ -40,17 +39,30 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const splitNodeIntoBranches = useChatStore((state) => state.splitNodeIntoBranches);
   const setNodeMarker = useChatStore((state) => state.setNodeMarker);
   const toggleNodeCollapse = useChatStore((state) => state.toggleNodeCollapse);
-  const generatingNodeId = useChatStore((state) => state.generatingNodeId);
+  const deleteNode = useSessionStore((state) => state.deleteNode);
   const [isSplitting, setIsSplitting] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const contentRef = useRef<HTMLDivElement>(null);
+  const prevCollapsedRef = useRef(node.collapsed);
 
-  // 使用原生事件在捕获阶段处理滚轮事件
+  // 从展开变成收缩时，自动显示 tooltip
   useEffect(() => {
-    // 只有展开状态才需要处理滚轮
-    if (node.collapsed) return;
+    if (!prevCollapsedRef.current && node.collapsed && node.marker) {
+      setShowTooltip(true);
+    }
+    prevCollapsedRef.current = node.collapsed;
+  }, [node.collapsed, node.marker]);
 
+  // 流式内容
+  const streamingContent = useGenerationStore((state) => state.streamingContent);
+  const streamingNodeId = useGenerationStore((state) => state.generatingNodeId);
+  const isReasoning = useGenerationStore((state) => state.isReasoning);
+
+  useEffect(() => {
+    if (node.collapsed) return;
     const contentEl = contentRef.current;
     if (!contentEl) return;
 
@@ -75,22 +87,21 @@ export default function MessageNode({ data }: MessageNodeProps) {
     return () => contentEl.removeEventListener('wheel', handleWheelCapture, { capture: true });
   }, [node.collapsed]);
 
-  // 使用类型守卫判断节点类型
   const isAIChat = isAIChatNode(node);
   const role = isAIChat ? node.role : null;
   const isUser = role === 'user';
   const isSystem = role === 'system';
 
-  // 只有 AI 或 System 节点，且不是当前高亮节点时，才允许被点击聚焦
   const isClickable = !isActive && !isUser;
-
-  // 检查是否可以手动裂变：必须是 AI 回复，且当前节点还没有被拆分过
   const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
 
-  // 判断当前节点是否正在等待 AI 回复
-  const isWaitingForAI = isUser && generatingNodeId === node.id;
+  // 判断当前节点是否正在流式生成
+  const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
 
-  // 获取缩略信息（前50个字符）
+  // 获取显示内容：如果正在流式且内容不为空，用流式内容；否则用节点内容
+  const displayContent = (isStreaming && streamingContent.length > 0) ? streamingContent : node.content;
+
+  // 获取缩略信息
   const getSummary = () => {
     const text = node.content.replace(/[#*`_\[\]]/g, '').trim();
     return text.length > 50 ? text.substring(0, 50) + '...' : text;
@@ -114,7 +125,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
     }
   };
 
-  const handleMarkerSelect = (emoji: string | undefined) => {
+  const handleMarkerSelect = (emoji: NodeMarker | undefined) => {
     setNodeMarker(node.id, emoji);
     setShowToolbar(false);
   };
@@ -124,11 +135,38 @@ export default function MessageNode({ data }: MessageNodeProps) {
     toggleNodeCollapse(node.id);
   };
 
-  // 收缩状态：显示一个 emoji 圆形，带悬浮提示
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setShowContextMenu(true);
+  };
+
+  const handleDelete = () => {
+    // 不能删除根节点
+    if (node.parentId) {
+      deleteNode(node.id);
+    }
+    setShowContextMenu(false);
+  };
+
+  // 点击其他地方关闭右键菜单
+  useEffect(() => {
+    const handleClick = () => setShowContextMenu(false);
+    if (showContextMenu) {
+      window.addEventListener('click', handleClick);
+      return () => window.removeEventListener('click', handleClick);
+    }
+  }, [showContextMenu]);
+
+  // 收缩状态：用 NodeToolbar 显示 tooltip，避免被连接线遮挡
   if (node.collapsed && node.marker) {
     return (
-      <div className="w-[480px] h-[56px] flex items-center justify-center">
-        <div className="relative">
+      <>
+        <div
+          className="w-[480px] h-[56px] flex items-center justify-center"
+          onContextMenu={handleContextMenu}
+        >
           <div
             onClick={handleCollapseClick}
             onMouseEnter={() => setShowTooltip(true)}
@@ -139,20 +177,38 @@ export default function MessageNode({ data }: MessageNodeProps) {
             <span className="text-2xl">{node.marker}</span>
           </div>
 
-          {/* 悬浮提示 */}
-          {showTooltip && (
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-gray-900 text-white text-xs rounded-lg px-4 py-2.5 shadow-lg w-64">
-              <div className="font-medium mb-1">{node.marker} {node.role}</div>
-              <div className="text-gray-300 text-[11px] leading-relaxed">{getSummary()}</div>
-              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45" />
-            </div>
-          )}
+          <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
+          <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
         </div>
 
-        {/* Handle 定位在容器顶部和底部中心 */}
-        <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
-        <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
-      </div>
+        {/* 使用 NodeToolbar 渲染 tooltip，在最顶层显示 */}
+        <NodeToolbar
+          isVisible={showTooltip}
+          position={Position.Bottom}
+          offset={8}
+          className="!bg-gray-900 text-white text-xs rounded-lg px-4 py-2.5 shadow-lg w-64"
+        >
+          <div className="font-medium mb-1">{node.marker} {role}</div>
+          <div className="text-gray-300 text-[11px] leading-relaxed">{getSummary()}</div>
+        </NodeToolbar>
+
+        {/* 右键菜单 */}
+        {showContextMenu && node.parentId && (
+          <div
+            className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
+            style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={handleDelete}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={14} />
+              Delete
+            </button>
+          </div>
+        )}
+      </>
     );
   }
 
@@ -164,6 +220,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
             focusNode(node.id);
           }
         }}
+        onContextMenu={handleContextMenu}
         className={cn(
           "w-[480px] rounded-2xl border p-4 transition-all duration-300 relative origin-top",
           isActive
@@ -172,7 +229,6 @@ export default function MessageNode({ data }: MessageNodeProps) {
           isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
         )}
       >
-        {/* 标记气泡 - 点击可收缩 */}
         {node.marker && (
           <div
             onClick={handleCollapseClick}
@@ -194,15 +250,24 @@ export default function MessageNode({ data }: MessageNodeProps) {
               {isUser ? <User size={14} /> : isSystem ? <Cpu size={14} /> : <Bot size={14} />}
             </div>
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              {node.role}
+              {role}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            {isWaitingForAI && (
-              <div className="flex items-center gap-1 text-gray-600 bg-gray-100 px-2 py-0.5 rounded-md" title="AI is thinking...">
+            {/* 正在思考图标 */}
+            {isStreaming && isReasoning && (
+              <div className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md" title="Model is thinking...">
+                <Brain size={12} className="animate-pulse" />
+                <span className="text-[10px] font-medium">Thinking...</span>
+              </div>
+            )}
+
+            {/* 正在生成内容 */}
+            {isStreaming && !isReasoning && (
+              <div className="flex items-center gap-1 text-leaf-600 bg-leaf-50 px-2 py-0.5 rounded-md">
                 <Loader2 size={12} className="animate-spin" />
-                <span className="text-[10px] font-medium">Generating...</span>
+                <span className="text-[10px] font-medium">Streaming...</span>
               </div>
             )}
 
@@ -224,7 +289,6 @@ export default function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {/* 标记按钮 */}
             {isActive && !isUser && (
               <button
                 onClick={(e) => {
@@ -249,13 +313,14 @@ export default function MessageNode({ data }: MessageNodeProps) {
           </div>
         </div>
 
+        {/* 主内容 */}
         <div
           ref={contentRef}
           className="text-sm text-gray-900 leading-relaxed max-h-[300px] overflow-y-auto pr-1 custom-scrollbar"
         >
           <div className="prose prose-sm w-full max-w-none break-words pointer-events-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {preprocessMarkdown(node.content)}
+              {preprocessMarkdown(displayContent)}
             </ReactMarkdown>
           </div>
         </div>
@@ -263,7 +328,6 @@ export default function MessageNode({ data }: MessageNodeProps) {
         <Handle type="source" position={Position.Bottom} className="w-2 h-2 opacity-0" />
       </div>
 
-      {/* NodeToolbar 标记选择 */}
       <NodeToolbar
         isVisible={showToolbar}
         position={Position.Top}
@@ -273,7 +337,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
         {MARKER_OPTIONS.map((option) => (
           <button
             key={option.emoji}
-            onClick={() => handleMarkerSelect(option.emoji)}
+            onClick={() => handleMarkerSelect(option.emoji as NodeMarker)}
             title={option.label}
             className={cn(
               "w-9 h-9 rounded-lg flex items-center justify-center text-lg transition-colors",
@@ -285,7 +349,6 @@ export default function MessageNode({ data }: MessageNodeProps) {
             {option.emoji}
           </button>
         ))}
-        {/* 清除标记 */}
         {node.marker && (
           <button
             onClick={() => handleMarkerSelect(undefined)}
@@ -296,6 +359,23 @@ export default function MessageNode({ data }: MessageNodeProps) {
           </button>
         )}
       </NodeToolbar>
+
+      {/* 右键菜单 */}
+      {showContextMenu && node.parentId && (
+        <div
+          className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
+          style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={handleDelete}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 size={14} />
+            Delete
+          </button>
+        </div>
+      )}
     </>
   );
 }

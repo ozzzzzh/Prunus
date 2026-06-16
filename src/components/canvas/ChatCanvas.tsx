@@ -1,9 +1,10 @@
-import { useMemo, useEffect, useRef } from 'react';
+import { useMemo, useEffect, useRef, useCallback } from 'react';
 import { ReactFlow, Background, Controls, type Node, type Edge, useNodesState, useEdgesState, ConnectionMode, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Focus } from 'lucide-react';
 
-import { useChatStore } from '../../store/chatStore';
+import { useSessionStore } from '../../store/sessionStore';
+import { useGenerationStore } from '../../store/generationStore';
 import MessageNode from './MessageNode';
 import { getLayoutedElements } from '../../utils/layout';
 
@@ -12,9 +13,13 @@ const nodeTypes = {
 };
 
 export default function ChatCanvas() {
-  const activeSessionId = useChatStore(state => state.activeSessionId);
-  const sessions = useChatStore(state => state.sessions);
-  
+  // 直接订阅 sessionStore，避免 chatStore getter 的问题
+  const activeSessionId = useSessionStore(state => state.activeSessionId);
+  const sessions = useSessionStore(state => state.sessions);
+  const focusNode = useSessionStore(state => state.focusNode);
+  const toggleNodeCollapse = useSessionStore(state => state.toggleNodeCollapse);
+  const deleteNode = useSessionStore(state => state.deleteNode);
+
   const session = activeSessionId ? sessions[activeSessionId] : null;
 
   // React Flow instance for programmatic view control
@@ -118,10 +123,10 @@ export default function ChatCanvas() {
 
   const handleFocusLatestNode = () => {
     if (!session) return;
-    
+
     // 优先聚焦正在生成的节点，如果没有则聚焦当前点选（激活）的节点
-    const targetNodeId = useChatStore.getState().generatingNodeId || session.currentNodeId;
-    
+    const targetNodeId = useGenerationStore.getState().generatingNodeId || session.currentNodeId;
+
     if (!targetNodeId) return;
 
     const targetNode = nodes.find(n => n.id === targetNodeId);
@@ -133,6 +138,94 @@ export default function ChatCanvas() {
       setCenter(centerX, centerY + 60, { zoom: 1.0, duration: 500 });
     }
   };
+
+  // 键盘导航
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    // 如果用户正在输入，不触发导航
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+      return;
+    }
+
+    if (!session || !session.currentNodeId) return;
+
+    const currentNode = session.nodes[session.currentNodeId];
+    if (!currentNode) return;
+
+    let targetNodeId: string | null = null;
+
+    switch (e.key) {
+      case 'ArrowUp':
+        // 跳到父节点
+        e.preventDefault();
+        targetNodeId = currentNode.parentId;
+        break;
+
+      case 'ArrowDown':
+        // 跳到第一个子节点
+        e.preventDefault();
+        if (currentNode.childrenIds.length > 0) {
+          targetNodeId = currentNode.childrenIds[0];
+        }
+        break;
+
+      case 'ArrowLeft':
+        // 跳到上一个兄弟节点
+        e.preventDefault();
+        if (currentNode.parentId) {
+          const parentNode = session.nodes[currentNode.parentId];
+          if (parentNode && parentNode.childrenIds.length > 1) {
+            const currentIndex = parentNode.childrenIds.indexOf(session.currentNodeId!);
+            if (currentIndex > 0) {
+              targetNodeId = parentNode.childrenIds[currentIndex - 1];
+            }
+          }
+        }
+        break;
+
+      case 'ArrowRight':
+        // 跳到下一个兄弟节点
+        e.preventDefault();
+        if (currentNode.parentId) {
+          const parentNode = session.nodes[currentNode.parentId];
+          if (parentNode && parentNode.childrenIds.length > 1) {
+            const currentIndex = parentNode.childrenIds.indexOf(session.currentNodeId!);
+            if (currentIndex < parentNode.childrenIds.length - 1) {
+              targetNodeId = parentNode.childrenIds[currentIndex + 1];
+            }
+          }
+        }
+        break;
+
+      case 'c':
+      case 'C':
+        // 切换当前节点的展开/收缩状态
+        e.preventDefault();
+        if (currentNode.marker) {
+          toggleNodeCollapse(session.currentNodeId);
+        }
+        break;
+
+      case 'Delete':
+      case 'Backspace':
+        // 删除当前节点（及其子节点）
+        e.preventDefault();
+        // 不能删除根节点
+        if (currentNode.parentId) {
+          deleteNode(session.currentNodeId);
+        }
+        break;
+    }
+
+    if (targetNodeId && session.nodes[targetNodeId]) {
+      focusNode(targetNodeId);
+    }
+  }, [session, focusNode, toggleNodeCollapse, deleteNode]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   if (!session) {
     return (
@@ -156,8 +249,6 @@ export default function ChatCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={(_, node) => {
-          // React Flow 提供的原生节点点击事件
-          const focusNode = useChatStore.getState().focusNode;
           // 只允许点击非高亮的 AI/System 节点
           const nodeData = node.data as { isActive?: boolean; node?: { role?: string } };
           if (nodeData && !nodeData.isActive && nodeData.node?.role !== 'user') {

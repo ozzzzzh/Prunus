@@ -44,6 +44,8 @@ export class IndexedDBSessionRepository implements ISessionRepository {
   }
 
   async saveAll(sessions: ChatSession[]): Promise<void> {
+    // 先清空再保存，确保删除的 session 不会残留
+    await clearStore(STORES.SESSIONS);
     await saveBatch(STORES.SESSIONS, sessions);
   }
 

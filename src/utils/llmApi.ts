@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
 import { useAPIConfigStore } from '../store';
 
+// 检测是否是 Safari 浏览器
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
 export async function generateAIResponse(
   messages: { role: 'user' | 'assistant' | 'system', content: string }[],
   onChunk?: (data: { content: string; reasoning?: string }) => void
@@ -31,9 +34,14 @@ export async function generateAIResponse(
     dangerouslyAllowBrowser: true,
     // 增加超时设置，防止请求一直挂起
     timeout: 30000,
-    // 如果是自定义中转 API，有些不支持 default headers，可以尽量简化
+    // Safari 兼容性：添加额外的请求头
     defaultHeaders: {
       "Content-Type": "application/json",
+      // Safari 可能需要这些头部来绕过某些安全检查
+      ...(isSafari ? {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+      } : {}),
     }
   });
 
@@ -60,17 +68,25 @@ export async function generateAIResponse(
     return { content: fullContent, reasoning: fullReasoning };
   } catch (error: unknown) {
     console.error('LLM API Error:', error);
-    
+
     // 提取更友好的错误信息
     const err = error as Record<string, unknown>;
     if (err.name === 'APIConnectionError' || (typeof err.message === 'string' && err.message.includes('fetch'))) {
       throw new Error(`Connection Error: Please check if your Base URL (${baseURL}) is accessible and supports CORS. If you are using a local API, ensure it's running.`);
     }
-    
+
     if (err.status === 401) {
       throw new Error('Authentication Error: Your API Key is invalid or expired.');
     }
-    
+
+    if (err.status === 403) {
+      // Safari 特定的 403 错误提示
+      if (isSafari) {
+        throw new Error('Safari Browser Error: Safari has strict cross-origin restrictions. Please try:\n1. Disable "Prevent cross-site tracking" in Safari Settings > Privacy\n2. Or use Chrome/Firefox browser instead');
+      }
+      throw new Error('Access Forbidden (403): Your request was blocked by the API server. Please check your API key permissions or try using a different browser.');
+    }
+
     if (err.status === 404) {
       throw new Error(`Model Error: The model '${apiConfig.model}' might not exist on this endpoint.`);
     }

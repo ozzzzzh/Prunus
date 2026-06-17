@@ -22,6 +22,10 @@ interface UIState {
   // 缩放级别（预留）
   canvasZoom: number;
   setCanvasZoom: (zoom: number) => void;
+
+  // 节点编辑模式
+  editingNodeId: string | null;
+  setEditingNode: (nodeId: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -36,4 +40,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   canvasZoom: 1.0,
   setCanvasZoom: (zoom) => set({ canvasZoom: zoom }),
+
+  editingNodeId: null,
+  setEditingNode: (nodeId) => set({ editingNodeId: nodeId }),
 }));

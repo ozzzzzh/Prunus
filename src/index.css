@@ -131,3 +131,23 @@ html, body, #root {
 .prose li {
   margin-top: 0.25rem;
 }
+
+/* 编辑模式下的光标和选择样式 */
+[contenteditable="true"] {
+  cursor: text;
+  caret-color: #4a7c44;
+}
+
+[contenteditable="true"]::selection {
+  background-color: rgba(106, 158, 98, 0.25);
+}
+
+[contenteditable="true"]::-moz-selection {
+  background-color: rgba(106, 158, 98, 0.25);
+}
+
+/* 节点编辑状态下整体可选 */
+.editing-mode {
+  user-select: text;
+  -webkit-user-select: text;
+}

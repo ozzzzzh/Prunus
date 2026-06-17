@@ -2,14 +2,18 @@ import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import type { PrunusNode, NodeMarker } from '../../types';
 import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
+import { useUIStore } from '../../store/uiStore';
 import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { handlePasteAsPlainText, markdownToHtml } from '../../utils/richtext';
 
 const preprocessMarkdown = (text: string): string => {
   return text
@@ -40,13 +44,22 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const setNodeMarker = useChatStore((state) => state.setNodeMarker);
   const toggleNodeCollapse = useChatStore((state) => state.toggleNodeCollapse);
   const deleteNode = useSessionStore((state) => state.deleteNode);
+  const updateNodeContent = useSessionStore((state) => state.updateNodeContent);
+  const editingNodeId = useUIStore((state) => state.editingNodeId);
+  const setEditingNode = useUIStore((state) => state.setEditingNode);
   const [isSplitting, setIsSplitting] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+  // 临时存储编辑后的内容，用于退出编辑模式时避免闪烁
+  const [pendingContent, setPendingContent] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const editRef = useRef<HTMLDivElement>(null);
   const prevCollapsedRef = useRef(node.collapsed);
+
+  // 是否处于编辑模式
+  const isEditing = editingNodeId === node.id;
 
   // 从展开变成收缩时，自动显示 tooltip
   useEffect(() => {
@@ -98,12 +111,22 @@ export default function MessageNode({ data }: MessageNodeProps) {
   // 判断当前节点是否正在流式生成
   const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
 
-  // 获取显示内容：如果正在流式且内容不为空，用流式内容；否则用节点内容
-  const displayContent = (isStreaming && streamingContent.length > 0) ? streamingContent : node.content;
+  // 获取显示内容：优先使用临时内容（避免退出编辑模式时闪烁），然后是流式内容，最后是节点内容
+  const displayContent = pendingContent || ((isStreaming && streamingContent.length > 0) ? streamingContent : node.content);
 
-  // 获取缩略信息
+  // 当节点内容更新后，清除临时内容
+  useEffect(() => {
+    if (pendingContent && node.content === pendingContent) {
+      setPendingContent(null);
+    }
+  }, [node.content, pendingContent]);
+
+  // 获取缩略信息（剥离 HTML 标签和 markdown 符号）
   const getSummary = () => {
-    const text = node.content.replace(/[#*`_\[\]]/g, '').trim();
+    // 先剥离 HTML 标签
+    const textWithoutHtml = node.content.replace(/<[^>]*>/g, '');
+    // 再移除 markdown 符号
+    const text = textWithoutHtml.replace(/[#*`_\[\]]/g, '').trim();
     return text.length > 50 ? text.substring(0, 50) + '...' : text;
   };
 
@@ -159,6 +182,110 @@ export default function MessageNode({ data }: MessageNodeProps) {
     }
   }, [showContextMenu]);
 
+  // 防止重复保存的标记
+  const isSavingRef = useRef(false);
+  // 记录编辑前的内容
+  const originalContentRef = useRef<string>('');
+  // 编辑器内容状态（用于 React 控制渲染）
+  const [editorContent, setEditorContent] = useState<string>('');
+  // 标记编辑器是否已完成初始化
+  const isInitializedRef = useRef(false);
+
+  // 进入编辑模式
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!isStreaming) {
+      // 重置所有标记
+      isSavingRef.current = false;
+      // 记录编辑前的内容
+      originalContentRef.current = node.content;
+      // 重置初始化标记
+      isInitializedRef.current = false;
+      // 直接设置编辑器内容（同步，不依赖 useEffect）
+      const isHtml = node.content.includes('<') && node.content.includes('>');
+      if (isHtml) {
+        setEditorContent(node.content);
+        isInitializedRef.current = true;
+      } else {
+        // 如果不是 HTML，异步转换
+        markdownToHtml(node.content).then((html) => {
+          // 只有当仍然处于编辑模式时才设置内容
+          if (useUIStore.getState().editingNodeId === node.id) {
+            setEditorContent(html);
+            isInitializedRef.current = true;
+          }
+        });
+      }
+      setEditingNode(node.id);
+    }
+  };
+
+  // 当退出编辑模式时，清空编辑器内容状态
+  useEffect(() => {
+    if (!isEditing) {
+      setEditorContent('');
+      isInitializedRef.current = false;
+    }
+  }, [isEditing]);
+
+  // 当编辑器内容设置完成后，聚焦并将光标移动到末尾
+  useEffect(() => {
+    if (isEditing && editorContent && editRef.current) {
+      // 使用 setTimeout 确保 DOM 更新完成
+      setTimeout(() => {
+        if (editRef.current && isEditing) {
+          editRef.current.focus();
+          // 将光标移动到末尾
+          const range = document.createRange();
+          const selection = window.getSelection();
+          if (selection && editRef.current.childNodes.length > 0) {
+            range.selectNodeContents(editRef.current);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
+      }, 0);
+    }
+  }, [isEditing, editorContent]);
+
+  // 退出编辑模式并保存内容
+  const handleEditBlur = (e: React.FocusEvent) => {
+    // 防止事件冒泡
+    e.stopPropagation();
+    e.preventDefault();
+
+    // 如果编辑器还没初始化完成，直接退出
+    if (!isInitializedRef.current) {
+      setEditingNode(null);
+      return;
+    }
+
+    // 防止重复保存
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+
+    if (editRef.current) {
+      const newContent = editRef.current.innerHTML;
+      // 先设置临时内容，避免退出编辑模式时闪烁
+      setPendingContent(newContent);
+      // 只有内容真正改变时才更新
+      if (newContent !== originalContentRef.current) {
+        updateNodeContent(node.id, newContent);
+      }
+    }
+    setEditingNode(null);
+  };
+
+  // 处理编辑器粘贴事件
+  const handleEditPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = e.clipboardData.getData('text/plain');
+    document.execCommand('insertText', false, text);
+  };
+
   // 收缩状态：用 NodeToolbar 显示 tooltip，避免被连接线遮挡
   if (node.collapsed && node.marker) {
     return (
@@ -197,8 +324,8 @@ export default function MessageNode({ data }: MessageNodeProps) {
           <div className="text-gray-300 text-[11px] leading-relaxed">{getSummary()}</div>
         </NodeToolbar>
 
-        {/* 右键菜单 */}
-        {showContextMenu && node.parentId && (
+        {/* 右键菜单 - 使用 Portal 渲染到 body */}
+        {showContextMenu && node.parentId && createPortal(
           <div
             className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
             style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
@@ -211,7 +338,8 @@ export default function MessageNode({ data }: MessageNodeProps) {
               <Trash2 size={14} />
               Delete
             </button>
-          </div>
+          </div>,
+          document.body
         )}
       </>
     );
@@ -220,18 +348,26 @@ export default function MessageNode({ data }: MessageNodeProps) {
   return (
     <>
       <div
-        onClick={() => {
+        onClick={(e) => {
+          if (isEditing) {
+            e.stopPropagation();
+            return;
+          }
           if (isClickable) {
             focusNode(node.id);
           }
         }}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
         className={cn(
           "w-[480px] rounded-2xl border p-4 transition-all duration-300 relative origin-top",
-          isActive
-            ? "border-leaf-400 bg-white shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)] z-20"
-            : "border-gray-200 bg-white/80 opacity-60 shadow-sm z-0",
-          isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
+          isEditing && "editing-mode",
+          isEditing
+            ? "border-leaf-500 bg-white shadow-[0_4px_24px_-4px_rgba(0,0,0,0.15)] z-30 ring-2 ring-leaf-200"
+            : isActive
+              ? "border-leaf-400 bg-white shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)] z-20"
+              : "border-gray-200 bg-white/80 opacity-60 shadow-sm z-0",
+          !isEditing && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
         )}
       >
         {node.marker && (
@@ -310,7 +446,13 @@ export default function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {isActive && (
+            {isEditing && (
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full pointer-events-none">
+                Editing
+              </span>
+            )}
+
+            {!isEditing && isActive && (
               <span className="text-[10px] font-medium text-leaf-600 bg-leaf-50 px-2 py-0.5 rounded-full pointer-events-none">
                 Active
               </span>
@@ -322,12 +464,34 @@ export default function MessageNode({ data }: MessageNodeProps) {
         <div
           ref={contentRef}
           className="text-sm text-gray-900 leading-relaxed max-h-[300px] overflow-y-auto pr-1 custom-scrollbar"
+          onDoubleClick={handleDoubleClick}
         >
-          <div className="prose prose-sm w-full max-w-none break-words pointer-events-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {preprocessMarkdown(displayContent)}
-            </ReactMarkdown>
-          </div>
+          {isEditing ? (
+            <div
+              key={editorContent ? 'initialized' : 'empty'}
+              ref={editRef}
+              contentEditable
+              onBlur={handleEditBlur}
+              onPaste={handleEditPaste}
+              onKeyDown={(e) => {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                  e.stopPropagation();
+                }
+              }}
+              className="outline-none min-h-[60px] w-full max-w-none break-words prose prose-sm"
+              suppressContentEditableWarning
+              dangerouslySetInnerHTML={{ __html: editorContent }}
+            />
+          ) : (
+            <div className="prose prose-sm w-full max-w-none break-words">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+              >
+                {preprocessMarkdown(displayContent)}
+              </ReactMarkdown>
+            </div>
+          )}
         </div>
 
         <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
@@ -365,8 +529,8 @@ export default function MessageNode({ data }: MessageNodeProps) {
         )}
       </NodeToolbar>
 
-      {/* 右键菜单 */}
-      {showContextMenu && node.parentId && (
+      {/* 右键菜单 - 使用 Portal 渲染到 body */}
+      {showContextMenu && node.parentId && createPortal(
         <div
           className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
           style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
@@ -379,7 +543,8 @@ export default function MessageNode({ data }: MessageNodeProps) {
             <Trash2 size={14} />
             Delete
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

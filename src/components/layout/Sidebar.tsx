@@ -240,7 +240,7 @@ export default function Sidebar() {
             <span>Settings</span>
           </button>
           <div className="text-[11px] text-gray-400 text-center mt-2">
-            Prunus Core v0.1
+            Prunus Core v0.1.16
           </div>
         </div>
       </div>

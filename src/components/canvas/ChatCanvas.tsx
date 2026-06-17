@@ -207,7 +207,6 @@ export default function ChatCanvas() {
         break;
 
       case 'Delete':
-      case 'Backspace':
         // 删除当前节点（及其子节点）
         e.preventDefault();
         // 不能删除根节点
@@ -258,10 +257,12 @@ export default function ChatCanvas() {
         connectionMode={ConnectionMode.Loose}
         nodesDraggable={false} // 禁止节点拖拽，因为我们是用 dagre 自动布局的
         nodesConnectable={false} // 禁止手动连线
-        elementsSelectable={true} // 允许节点被选中/点击
-        panOnScroll={true} // 允许使用鼠标滚轮平移画布，而不是缩放
+        elementsSelectable={false} // 禁止点击选中节点，避免干扰文本选择
+        panOnScroll={true} // 允许使用鼠标滚轮平移画布
+        panOnDrag={[1, 2]} // 只允许中键(1)和右键(2)拖动画布，左键用于文本选择
         selectionOnDrag={false} // 禁用框选
-        zoomOnScroll={false} // 禁用滚轮缩放，保持更好的阅读体验（可以通过双指缩放或按住ctrl缩放）
+        zoomOnScroll={false} // 禁用滚轮缩放
+        zoomOnDoubleClick={false} // 禁用双击缩放
         fitView
         minZoom={0.1}
         maxZoom={1.5}

@@ -10,6 +10,7 @@ export default defineConfig({
   ],
   server: {
     proxy: {
+      // 腾讯云 API 代理
       '/api/tencent': {
         target: 'https://api.lkeap.cloud.tencent.com',
         changeOrigin: true,

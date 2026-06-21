@@ -6,6 +6,7 @@
 
 import type { ChatSession } from '../store/sessionStore';
 import type { APIConfig } from '../store/apiConfigStore';
+import type { FolderItem } from '../types';
 
 /**
  * 会话 Repository 接口
@@ -33,11 +34,30 @@ export interface ISettingsRepository {
 }
 
 /**
+ * 文件夹 Repository 接口
+ */
+export interface IFolderRepository {
+  // CRUD
+  getById(id: string): Promise<FolderItem | null>;
+  getAll(): Promise<FolderItem[]>;
+  save(item: FolderItem): Promise<void>;
+  delete(id: string): Promise<void>;
+
+  // 批量操作
+  saveAll(items: FolderItem[]): Promise<void>;
+  clear(): Promise<void>;
+
+  // 查询
+  getByParentId(parentId: string | null): Promise<FolderItem[]>;
+}
+
+/**
  * 数据持久化接口（组合）
  */
 export interface IPersistenceRepository {
   session: ISessionRepository;
   settings: ISettingsRepository;
+  folder: IFolderRepository;
 
   // 初始化
   init(): Promise<void>;
@@ -46,9 +66,11 @@ export interface IPersistenceRepository {
   exportAll(): Promise<{
     sessions: ChatSession[];
     apiConfig: APIConfig | null;
+    folderItems: FolderItem[];
   }>;
   importAll(data: {
     sessions: ChatSession[];
     apiConfig?: APIConfig;
+    folderItems?: FolderItem[];
   }): Promise<void>;
 }

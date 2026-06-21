@@ -5,13 +5,14 @@
  */
 
 const DB_NAME = 'prunus-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Store 名称
 export const STORES = {
   SESSIONS: 'sessions',
   NODES: 'nodes',
   SETTINGS: 'settings',
+  FOLDERS: 'folders',
 } as const;
 
 /**
@@ -49,6 +50,13 @@ export function openDatabase(): Promise<IDBDatabase> {
       // 创建 settings store
       if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
         db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
+      }
+
+      // 创建 folders store
+      if (!db.objectStoreNames.contains(STORES.FOLDERS)) {
+        const folderStore = db.createObjectStore(STORES.FOLDERS, { keyPath: 'id' });
+        folderStore.createIndex('parentId', 'parentId', { unique: false });
+        folderStore.createIndex('createdAt', 'createdAt', { unique: false });
       }
     };
   });

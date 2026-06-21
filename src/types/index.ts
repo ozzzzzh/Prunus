@@ -4,3 +4,4 @@
 
 export * from './node';
 export * from './session';
+export * from './folder';

@@ -6,7 +6,14 @@
 
 import { create } from 'zustand';
 
+// 页面类型
+export type PageType = 'canvas' | 'fileManager';
+
 interface UIState {
+  // 当前页面
+  currentPage: PageType;
+  setCurrentPage: (page: PageType) => void;
+
   // 侧边栏
   sidebarCollapsed: boolean;
   toggleSidebar: (collapsed: boolean) => void;
@@ -29,6 +36,9 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set) => ({
+  currentPage: 'fileManager', // 默认进入文件管理页面
+  setCurrentPage: (page) => set({ currentPage: page }),
+
   sidebarCollapsed: false,
   toggleSidebar: (collapsed) => set({ sidebarCollapsed: collapsed }),
 

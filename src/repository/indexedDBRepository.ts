@@ -6,9 +6,11 @@
 
 import type { ChatSession } from '../store/sessionStore';
 import type { APIConfig } from '../store/apiConfigStore';
+import type { FolderItem } from '../types';
 import type {
   ISessionRepository,
   ISettingsRepository,
+  IFolderRepository,
   IPersistenceRepository,
 } from './interface';
 import {
@@ -19,6 +21,7 @@ import {
   deleteData,
   clearStore,
   saveBatch,
+  queryByIndex,
   STORES,
 } from '../utils/indexedDB';
 
@@ -86,15 +89,57 @@ export class IndexedDBSettingsRepository implements ISettingsRepository {
 }
 
 /**
+ * 文件夹 Repository - IndexedDB 实现
+ */
+export class IndexedDBFolderRepository implements IFolderRepository {
+  async getById(id: string): Promise<FolderItem | null> {
+    const item = await getData<FolderItem>(STORES.FOLDERS, id);
+    return item || null;
+  }
+
+  async getAll(): Promise<FolderItem[]> {
+    return getAllData<FolderItem>(STORES.FOLDERS);
+  }
+
+  async save(item: FolderItem): Promise<void> {
+    await saveData(STORES.FOLDERS, item);
+  }
+
+  async delete(id: string): Promise<void> {
+    await deleteData(STORES.FOLDERS, id);
+  }
+
+  async saveAll(items: FolderItem[]): Promise<void> {
+    await clearStore(STORES.FOLDERS);
+    await saveBatch(STORES.FOLDERS, items);
+  }
+
+  async clear(): Promise<void> {
+    await clearStore(STORES.FOLDERS);
+  }
+
+  async getByParentId(parentId: string | null): Promise<FolderItem[]> {
+    if (parentId === null) {
+      // 获取根目录项
+      const all = await this.getAll();
+      return all.filter(item => item.parentId === null);
+    }
+    return queryByIndex<FolderItem>(STORES.FOLDERS, 'parentId', parentId);
+  }
+}
+
+/**
  * 组合 Repository - IndexedDB 实现
  */
 export class IndexedDBRepository implements IPersistenceRepository {
   session: ISessionRepository;
   settings: ISettingsRepository;
+  folder: IFolderRepository;
 
   constructor() {
     this.session = new IndexedDBSessionRepository();
     this.settings = new IndexedDBSettingsRepository();
+    this.folder = new IndexedDBFolderRepository();
   }
 
   async init(): Promise<void> {
@@ -105,20 +150,27 @@ export class IndexedDBRepository implements IPersistenceRepository {
   async exportAll(): Promise<{
     sessions: ChatSession[];
     apiConfig: APIConfig | null;
+    folderItems: FolderItem[];
   }> {
     const sessions = await this.session.getAll();
     const apiConfig = await this.settings.getAPIConfig();
-    return { sessions, apiConfig };
+    const folderItems = await this.folder.getAll();
+    return { sessions, apiConfig, folderItems };
   }
 
   async importAll(data: {
     sessions: ChatSession[];
     apiConfig?: APIConfig;
+    folderItems?: FolderItem[];
   }): Promise<void> {
     await this.session.clear();
     await this.session.saveAll(data.sessions);
     if (data.apiConfig) {
       await this.settings.saveAPIConfig(data.apiConfig);
+    }
+    if (data.folderItems) {
+      await this.folder.clear();
+      await this.folder.saveAll(data.folderItems);
     }
   }
 }

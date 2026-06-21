@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
   ChevronRight,
@@ -10,6 +10,7 @@ import ChatInput from './components/chat/ChatInput';
 import SettingsModal from './components/layout/SettingsModal';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
+import { WelcomeGuide, HelpPanel } from './components/onboarding';
 import { useSessionStore } from './store/sessionStore';
 import { useFolderStore } from './store/folderStore';
 import { useUIStore } from './store/uiStore';
@@ -19,7 +20,6 @@ import { cn } from './utils/cn';
 function App() {
   const sessions = useSessionStore(state => state.sessions);
   const activeSessionId = useSessionStore(state => state.activeSessionId);
-  const createSession = useSessionStore(state => state.createSession);
   const currentPage = useUIStore(state => state.currentPage);
   const setCurrentPage = useUIStore(state => state.setCurrentPage);
   const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed);
@@ -27,15 +27,17 @@ function App() {
 
   const folderItems = useFolderStore(state => state.items);
 
-  // Initialize persistence and create default session if needed
+  // 初始化状态
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Initialize persistence
+  // 如果 IndexedDB 为空，会自动加载 example.json 数据
   useEffect(() => {
     initPersistence().then(() => {
       enableAutoSave();
-      if (Object.keys(useSessionStore.getState().sessions).length === 0) {
-        createSession();
-      }
+      setIsInitialized(true);
     });
-  }, [createSession]);
+  }, []);
 
   // 获取当前会话所在的文件夹路径（面包屑）
   const breadcrumbs = useMemo(() => {
@@ -79,6 +81,14 @@ function App() {
 
   // 如果在文件管理页面，直接返回文件管理页面组件
   if (currentPage === 'fileManager') {
+    // 等待初始化完成后再渲染
+    if (!isInitialized) {
+      return (
+        <div className="h-screen w-screen bg-[#fafafa] flex items-center justify-center">
+          <div className="text-gray-500 text-sm">Loading...</div>
+        </div>
+      );
+    }
     return <FileManagerPage />;
   }
 
@@ -150,6 +160,12 @@ function App() {
       </main>
 
       <SettingsModal />
+
+      {/* 帮助面板 */}
+      <HelpPanel />
+
+      {/* 新用户引导 */}
+      <WelcomeGuide />
     </div>
   );
 }

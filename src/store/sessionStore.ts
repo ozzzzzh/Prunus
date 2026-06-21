@@ -46,6 +46,9 @@ interface SessionState {
   // 批量操作
   importSessions: (sessions: Record<string, ChatSession>) => void;
   exportSessions: () => Record<string, ChatSession>;
+
+  // 加载示例数据
+  loadExampleData: () => string | null;
 }
 
 // ===== 工具函数 =====
@@ -57,33 +60,11 @@ const generateId = () => Math.random().toString(36).substring(2, 9);
 import exampleData from '../example.json';
 
 const initializeSessions = (): Record<string, ChatSession> => {
+  // 首次访问不加载 example.json，显示空状态引导
+  // 用户可以点击"查看示例"按钮手动加载
   const sessions: Record<string, ChatSession> = {};
 
-  // 迁移 example.json 中的旧数据
-  if (exampleData.sessions) {
-    for (const [sessionId, legacySession] of Object.entries(exampleData.sessions) as [string, any][]) {
-      const migratedNodes: Record<string, PrunusNode> = {};
-      // 将exampleData.sessions 转换为键值对数组类型并解构为sessionId和legacySession的键值对数组进行遍历
-      for (const [nodeId, legacyNode] of Object.entries(legacySession.nodes) as [string, LegacyNode][]) {
-        // 将legacySession.nodes 转换为键值对数组类型并解构为nodeId和legacyNode的键值对数组进行遍历
-        migratedNodes[nodeId] = migrateNode(legacyNode);
-        // 迁移到migratedNodes中，键为nodeId，值为迁移后的节点对象
-      }
-
-      sessions[sessionId] = {
-        id: sessionId,
-        title: legacySession.title,
-        nodes: migratedNodes,
-        rootNodeId: legacySession.rootNodeId,
-        currentNodeId: legacySession.currentNodeId,
-        createdAt: legacySession.createdAt,
-        updatedAt: legacySession.createdAt,
-        pinned: legacySession.pinned,
-      };
-    }
-  }
-
-  // 创建默认会话
+  // 创建一个空的默认会话
   const emptySessionId = generateId();
   const emptyRootId = generateId();
   sessions[emptySessionId] = {
@@ -560,5 +541,38 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   exportSessions: () => {
     return get().sessions;
+  },
+
+  // 加载示例数据（example.json）
+  loadExampleData: () => {
+    if (!exampleData.sessions) return null;
+
+    const migratedNodes: Record<string, PrunusNode> = {};
+    const exampleSessionId = Object.keys(exampleData.sessions)[0];
+    const legacySession = exampleData.sessions[exampleSessionId];
+
+    if (!legacySession) return null;
+
+    for (const [nodeId, legacyNode] of Object.entries(legacySession.nodes) as [string, LegacyNode][]) {
+      migratedNodes[nodeId] = migrateNode(legacyNode);
+    }
+
+    const exampleSession: ChatSession = {
+      id: exampleSessionId,
+      title: legacySession.title,
+      nodes: migratedNodes,
+      rootNodeId: legacySession.rootNodeId,
+      currentNodeId: legacySession.currentNodeId,
+      createdAt: legacySession.createdAt,
+      updatedAt: legacySession.createdAt,
+      pinned: legacySession.pinned,
+    };
+
+    set((state) => ({
+      sessions: { ...state.sessions, [exampleSessionId]: exampleSession },
+      activeSessionId: exampleSessionId,
+    }));
+
+    return exampleSessionId;
   },
 }));

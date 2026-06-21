@@ -19,6 +19,7 @@ import {
   Pencil,
   Trash2,
   Move,
+  HelpCircle,
 } from 'lucide-react';
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -56,6 +57,7 @@ export default function Sidebar() {
   const deleteSession = useSessionStore((state) => state.deleteSession);
 
   const toggleSettings = useUIStore((state) => state.toggleSettings);
+  const toggleHelp = useUIStore((state) => state.toggleHelp);
   const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
 
@@ -81,11 +83,11 @@ export default function Sidebar() {
     createFolder(parentId, '新建文件夹');
   }, [createFolder]);
 
-  // 新建会话
+  // 新建对话文件
   const handleCreateSession = useCallback((parentId: string | null) => {
     const sessionId = createSession();
     const session = useSessionStore.getState().sessions[sessionId];
-    createSessionItem(parentId, sessionId, session?.title || '新会话');
+    createSessionItem(parentId, sessionId, session?.title || '新对话文件');
     switchSession(sessionId);
   }, [createSession, createSessionItem, switchSession]);
 
@@ -114,7 +116,7 @@ export default function Sidebar() {
         deleteFolder(itemId);
       }
     } else {
-      if (confirm('确定要删除此会话吗？')) {
+      if (confirm('确定要删除此对话文件吗？')) {
         if (item.sessionId) {
           deleteSession(item.sessionId);
         }
@@ -349,13 +351,20 @@ export default function Sidebar() {
         {/* 空状态 */}
         {pinnedNodes.length === 0 && otherNodes.length === 0 && (
           <div className="text-center text-gray-400 text-sm mt-6 px-4 py-4">
-            还没有任何内容<br />右键创建文件夹或会话
+            还没有任何内容<br />右键创建文件夹或对话文件
           </div>
         )}
       </div>
 
       {/* 底部区域 */}
       <div className="p-3 border-t border-gray-100">
+        <button
+          onClick={() => toggleHelp(true)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <HelpCircle size={16} />
+          <span>Help & Shortcuts</span>
+        </button>
         <button
           onClick={() => toggleSettings(true)}
           className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -456,7 +465,7 @@ function ContextMenu({
               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <MessageSquare size={14} />
-              新建会话
+              新建对话文件
             </button>
           )}
           <div className="border-t border-gray-100 my-1" />
@@ -523,7 +532,7 @@ function ContextMenu({
               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <Plus size={14} />
-              新建会话
+              新建对话文件
             </button>
           )}
         </>

@@ -1,14 +1,13 @@
 /**
  * API 配置状态管理
  *
- * 负责 LLM API 的配置管理
+ * 注意：API Key 和 Base URL 现在通过 .env.local 文件配置
+ * 此 store 仅保留模型选择等前端可配置项
  */
 
 import { create } from 'zustand';
 
 export interface APIConfig {
-  apiKey: string;
-  baseUrl: string;
   model: string;
 }
 
@@ -18,22 +17,18 @@ interface APIConfigState {
   // 操作
   updateConfig: (config: Partial<APIConfig>) => void;
   resetConfig: () => void;
-
-  // 验证
-  isConfigured: () => boolean;
 }
 
+// 从环境变量获取默认模型
+const DEFAULT_MODEL = (import.meta as any).env?.VITE_LLM_MODEL || 'gpt-3.5-turbo';
+
 const DEFAULT_CONFIG: APIConfig = {
-  apiKey: '',
-  baseUrl: 'https://api.openai.com/v1',
-  model: 'gpt-3.5-turbo',
+  model: DEFAULT_MODEL,
 };
 
-export const useAPIConfigStore = create<APIConfigState>((set, get) => ({
+export const useAPIConfigStore = create<APIConfigState>((set) => ({
   config: {
-    apiKey: 'sk-sp-q42V1XVXEx6Ytf8y8yE0DAC5AnydYaNhBP0qIK8lrliEVg5b',
-    baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
-    model: 'glm-5',
+    model: DEFAULT_MODEL,
   },
 
   updateConfig: (newConfig) => {
@@ -44,10 +39,5 @@ export const useAPIConfigStore = create<APIConfigState>((set, get) => ({
 
   resetConfig: () => {
     set({ config: DEFAULT_CONFIG });
-  },
-
-  isConfigured: () => {
-    const { config } = get();
-    return !!config.apiKey && !!config.baseUrl && !!config.model;
   },
 }));

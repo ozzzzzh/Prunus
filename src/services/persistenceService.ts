@@ -60,6 +60,7 @@ async function migrateSessionsToFolderItems(): Promise<void> {
 /**
  * 初始化持久化
  * 从 IndexedDB 加载数据到 Store
+ * 首次访问显示空状态引导，不自动加载 example.json
  */
 export async function initPersistence(): Promise<void> {
   try {
@@ -67,7 +68,9 @@ export async function initPersistence(): Promise<void> {
 
     // 加载会话数据
     const sessions = await repository.session.getAll();
+
     if (sessions.length > 0) {
+      // IndexedDB 有数据，加载到 store
       const sessionsMap = sessions.reduce((acc, session) => {
         acc[session.id] = session;
         return acc;
@@ -75,31 +78,11 @@ export async function initPersistence(): Promise<void> {
 
       useSessionStore.getState().importSessions(sessionsMap);
     }
-
-    // 加载 API 配置
-    const apiConfig = await repository.settings.getAPIConfig();
-    if (apiConfig) {
-      useAPIConfigStore.getState().updateConfig(apiConfig);
-    }
-
-    // 数据迁移或清理重复数据
-    const existingFolderItems = await repository.folder.getAll();
-
-    if (existingFolderItems.length === 0 && sessions.length > 0) {
-      // 情况1: folder表为空，需要迁移
-      await migrateSessionsToFolderItems();
-    } else if (existingFolderItems.length > 0) {
-      // 情况2: folder表有数据，检查并清理重复
-      const cleanedItems = cleanDuplicateFolderItems(existingFolderItems);
-      if (cleanedItems.length !== existingFolderItems.length) {
-        console.log(`[Persistence] Cleaned ${existingFolderItems.length - cleanedItems.length} duplicate folder items`);
-        await repository.folder.saveAll(cleanedItems);
-      }
-    }
+    // 如果 IndexedDB 为空，保持 store 的空会话状态，不自动加载 example.json
 
     // 加载文件夹数据
     const folderItems = await repository.folder.getAll();
-    if (folderItems.length > 0) {
+    if (folderItems.length > 0 && sessions.length > 0) {
       const folderMap = folderItems.reduce((acc, item) => {
         acc[item.id] = item;
         return acc;

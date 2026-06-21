@@ -33,7 +33,8 @@ export default function FileManagerPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid'); // 默认网格视图
   const [sortMode, setSortMode] = useState<SortMode>('date');
   const [contextMenu, setContextMenu] = useState<{
-    id: string;
+    type: 'item' | 'empty';
+    id?: string;
     x: number;
     y: number;
   } | null>(null);
@@ -47,11 +48,13 @@ export default function FileManagerPage() {
   const createSessionItem = useFolderStore((state) => state.createSessionItem);
   const deleteSessionItem = useFolderStore((state) => state.deleteSessionItem);
   const togglePin = useFolderStore((state) => state.togglePin);
+  const loadExampleFolderItem = useFolderStore((state) => state.loadExampleFolderItem);
 
   const createSession = useSessionStore((state) => state.createSession);
   const deleteSession = useSessionStore((state) => state.deleteSession);
   const sessions = useSessionStore((state) => state.sessions);
   const switchSession = useSessionStore((state) => state.switchSession);
+  const loadExampleData = useSessionStore((state) => state.loadExampleData);
 
   const setCurrentPage = useUIStore((state) => state.setCurrentPage);
 
@@ -82,7 +85,7 @@ export default function FileManagerPage() {
     const children = Object.values(items).filter((item) => item.parentId === currentFolderId);
 
     return children.sort((a, b) => {
-      // 1. 文件夹优先（文件夹排在会话前面）
+      // 1. 文件夹优先（文件夹排在对话文件前面）
       if (a.type !== b.type) {
         return a.type === 'folder' ? -1 : 1;
       }
@@ -106,18 +109,35 @@ export default function FileManagerPage() {
     createFolder(currentFolderId, '新建文件夹');
   };
 
-  // 新建会话
+  // 新建对话文件
   const handleCreateSession = () => {
     const sessionId = createSession();
     const session = useSessionStore.getState().sessions[sessionId];
-    createSessionItem(currentFolderId, sessionId, session?.title || '新会话');
+    createSessionItem(currentFolderId, sessionId, session?.title || '新对话文件');
   };
 
-  // 右键菜单
-  const handleContextMenu = (e: React.MouseEvent, id: string) => {
+  // 加载示例数据
+  const handleLoadExample = () => {
+    const exampleSessionId = loadExampleData();
+    if (exampleSessionId) {
+      const exampleSession = useSessionStore.getState().sessions[exampleSessionId];
+      loadExampleFolderItem(exampleSessionId, exampleSession?.title || '示例文件');
+      switchSession(exampleSessionId);
+      setCurrentPage('canvas');
+    }
+  };
+
+  // 右键菜单 - 项目
+  const handleItemContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ id, x: e.clientX, y: e.clientY });
+    setContextMenu({ type: 'item', id, x: e.clientX, y: e.clientY });
+  };
+
+  // 右键菜单 - 空白区域
+  const handleEmptyContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ type: 'empty', x: e.clientX, y: e.clientY });
   };
 
   // 重命名
@@ -142,7 +162,7 @@ export default function FileManagerPage() {
         deleteFolder(id);
       }
     } else {
-      if (confirm('确定要删除此会话吗？')) {
+      if (confirm('确定要删除此对话文件吗？')) {
         if (item.sessionId) {
           deleteSession(item.sessionId);
         }
@@ -200,7 +220,7 @@ export default function FileManagerPage() {
               className="flex items-center gap-2 px-4 py-2 text-sm bg-leaf-600 hover:bg-leaf-700 text-white rounded-lg transition-colors"
             >
               <Plus size={18} />
-              <span>新建会话</span>
+              <span>新建对话文件</span>
             </button>
           </div>
         </div>
@@ -267,12 +287,68 @@ export default function FileManagerPage() {
       </div>
 
       {/* 文件列表区域 */}
-      <div className="flex-1 overflow-auto p-6">
+      <div
+        className="flex-1 overflow-auto p-6"
+        onContextMenu={handleEmptyContextMenu}
+      >
         {currentItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-            <Folder size={64} className="mb-4 opacity-30" />
-            <p className="text-lg mb-2">当前文件夹为空</p>
-            <p className="text-sm">点击上方按钮创建文件夹或会话</p>
+          <div className="flex flex-col items-center justify-center h-full">
+            {/* 空状态引导卡片 */}
+            <div className="max-w-md text-center">
+              {/* 图标 */}
+              <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-leaf-50 flex items-center justify-center">
+                <Folder size={40} className="text-leaf-400" />
+              </div>
+
+              {/* 标题 */}
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                开始你的第一棵对话树
+              </h3>
+
+              {/* 描述 */}
+              <p className="text-gray-500 mb-6 leading-relaxed inline-flex items-center justify-center flex-wrap">
+                让思维如枝桠般
+                <img
+                  src="/src/assets/PrunusLogoHighQuality.jpg"
+                  alt="Prunus Logo"
+                  className="w-5 h-5 rounded-full object-cover mx-1"
+                />
+                自然伸展
+              </p>
+
+              {/* 操作按钮 */}
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={handleCreateSession}
+                  className="flex items-center gap-2 px-6 py-3 bg-leaf-600 hover:bg-leaf-700 text-white rounded-xl font-medium transition-colors shadow-sm"
+                >
+                  <Plus size={18} />
+                  <span>创建第一个对话文件</span>
+                </button>
+                <button
+                  onClick={handleCreateFolder}
+                  className="flex items-center gap-2 px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
+                >
+                  <FolderPlus size={18} />
+                  <span>新建文件夹</span>
+                </button>
+              </div>
+
+              {/* 查看示例 */}
+              <div className="mt-4">
+                <button
+                  onClick={handleLoadExample}
+                  className="text-sm text-leaf-600 hover:text-leaf-700 transition-colors"
+                >
+                  或者查看示例文件 →
+                </button>
+              </div>
+
+              {/* 提示 */}
+              <p className="text-xs text-gray-400 mt-4">
+                💡 提示：使用文件夹可以更好地组织你的对话资产
+              </p>
+            </div>
           </div>
         ) : viewMode === 'list' ? (
           /* 列表视图 */
@@ -298,7 +374,7 @@ export default function FileManagerPage() {
                     key={item.id}
                     className="hover:bg-gray-50 cursor-pointer transition-colors"
                     onClick={() => handleOpenItem(item)}
-                    onContextMenu={(e) => handleContextMenu(e, item.id)}
+                    onContextMenu={(e) => handleItemContextMenu(e, item.id)}
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -318,7 +394,7 @@ export default function FileManagerPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
-                      {item.type === 'folder' ? '文件夹' : '会话'}
+                      {item.type === 'folder' ? '文件夹' : '对话文件'}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
                       {new Date(item.updatedAt).toLocaleDateString()}
@@ -327,7 +403,7 @@ export default function FileManagerPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleContextMenu(e, item.id);
+                          handleItemContextMenu(e, item.id);
                         }}
                         className="p-1 hover:bg-gray-100 rounded transition-colors"
                       >
@@ -347,13 +423,13 @@ export default function FileManagerPage() {
                 key={item.id}
                 className="group relative flex flex-col items-center p-4 rounded-lg cursor-pointer transition-all hover:bg-gray-100"
                 onClick={() => handleOpenItem(item)}
-                onContextMenu={(e) => handleContextMenu(e, item.id)}
+                onContextMenu={(e) => handleItemContextMenu(e, item.id)}
               >
                 {/* 右上角菜单按钮 - hover时显示 */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleContextMenu(e, item.id);
+                    handleItemContextMenu(e, item.id);
                   }}
                   className="absolute top-2 right-2 p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded transition-all"
                 >
@@ -402,27 +478,67 @@ export default function FileManagerPage() {
             className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px]"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button
-              onClick={() => handleTogglePin(contextMenu.id)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-            >
-              <Pin size={14} />
-              {items[contextMenu.id]?.pinned ? '取消置顶' : '置顶'}
-            </button>
-            <button
-              onClick={() => handleRename(contextMenu.id)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-            >
-              <Pencil size={14} />
-              重命名
-            </button>
-            <button
-              onClick={() => handleDelete(contextMenu.id)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-            >
-              <Trash2 size={14} />
-              删除
-            </button>
+            {/* 空白区域菜单 */}
+            {contextMenu.type === 'empty' && (
+              <>
+                <button
+                  onClick={() => {
+                    handleCreateFolder();
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <FolderPlus size={14} />
+                  新建文件夹
+                </button>
+                <button
+                  onClick={() => {
+                    handleCreateSession();
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Plus size={14} />
+                  新建对话文件
+                </button>
+              </>
+            )}
+
+            {/* 项目菜单 */}
+            {contextMenu.type === 'item' && contextMenu.id && (
+              <>
+                <button
+                  onClick={() => {
+                    handleTogglePin(contextMenu.id!);
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Pin size={14} />
+                  {items[contextMenu.id]?.pinned ? '取消置顶' : '置顶'}
+                </button>
+                <button
+                  onClick={() => {
+                    handleRename(contextMenu.id!);
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Pencil size={14} />
+                  重命名
+                </button>
+                <button
+                  onClick={() => {
+                    handleDelete(contextMenu.id!);
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 size={14} />
+                  删除
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

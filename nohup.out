@@ -5,3 +5,88 @@ $ vite
 
   ➜  Local:   http://localhost:5173/
   ➜  Network: http://10.1.0.12:5173/
+10:59:19 PM [vite] (client) hmr update /src/App.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+10:59:19 PM [vite] (client) ✨ new dependencies optimized: zustand/middleware
+10:59:32 PM [vite] (client) hmr update /src/App.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+11:01:18 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:01:28 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:01:46 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:02:03 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:02:19 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:02:51 PM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+11:03:25 PM [vite] (client) hmr update /src/components/canvas/ChatCanvas.tsx, /src/index.css
+11:03:48 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:04:03 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:09:47 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:09:55 PM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+11:10:01 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:10:09 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:14:40 PM [vite] (client) hmr update /src/components/canvas/ChatCanvas.tsx, /src/index.css
+11:15:55 PM [vite] vite.config.ts changed, restarting server...
+11:15:55 PM [vite] server restarted.
+11:16:25 PM [vite] vite.config.ts changed, restarting server...
+11:16:25 PM [vite] (client) Re-optimizing dependencies because lockfile has changed
+11:16:25 PM [vite] server restarted.
+11:17:31 PM [vite] (client) hmr update /src/index.css, /src/components/chat/ChatInput.tsx, /src/components/canvas/MessageNode.tsx
+11:17:47 PM [vite] (client) page reload src/store/apiConfigStore.ts
+11:18:27 PM [vite] (client) hmr update /src/index.css, /src/components/layout/SettingsModal.tsx
+11:18:41 PM [vite] .env.local changed, restarting server...
+11:18:41 PM [vite] server restarted.
+11:21:21 PM [vite] vite.config.ts changed, restarting server...
+[Vite Config] LLM Proxy Target: https://api.lkeap.cloud.tencent.com/coding/v3
+[Vite Config] LLM Model: glm-5
+11:21:21 PM [vite] (client) Re-optimizing dependencies because lockfile has changed
+11:21:21 PM [vite] server restarted.
+11:21:47 PM [vite] (client) hmr update /src/index.css, /src/components/chat/ChatInput.tsx, /src/components/canvas/MessageNode.tsx
+11:24:53 PM [vite] (client) hmr update /src/index.css, /src/components/canvas/MessageNode.tsx
+11:27:16 PM [vite] (client) hmr update /src/index.css, /src/components/canvas/MessageNode.tsx
+11:28:06 PM [vite] (client) hmr update /src/index.css, /src/components/canvas/MessageNode.tsx
+11:31:26 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:31:37 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:31:47 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:35:13 PM [vite] (client) hmr update /src/App.tsx, /src/components/canvas/ChatCanvas.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+11:36:45 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:37:00 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:37:33 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:42:58 PM [vite] (client) hmr update /src/App.tsx, /src/components/canvas/ChatCanvas.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+11:43:31 PM [vite] (client) hmr update /src/App.tsx, /src/components/canvas/ChatCanvas.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+11:43:49 PM [vite] (client) hmr update /src/App.tsx, /src/components/canvas/ChatCanvas.tsx, /src/components/chat/ChatInput.tsx, /src/components/layout/SettingsModal.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/components/canvas/MessageNode.tsx, /src/index.css
+11:44:03 PM [vite] (client) hmr update /src/App.tsx, /src/index.css
+11:44:37 PM [vite] (client) hmr update /src/App.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/index.css
+11:44:53 PM [vite] (client) hmr update /src/App.tsx, /src/components/pages/FileManagerPage.tsx, /src/components/layout/Sidebar.tsx, /src/index.css
+11:45:21 PM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+11:45:33 PM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+11:46:04 PM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+11:50:09 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:50:39 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:51:34 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:55:04 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:55:23 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:56:56 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+11:59:52 PM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+12:00:24 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:00:48 AM [vite] (client) hmr update /src/components/canvas/ChatCanvas.tsx, /src/index.css
+12:01:13 AM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+12:01:22 AM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+12:01:43 AM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+12:01:59 AM [vite] (client) hmr update /src/components/layout/Sidebar.tsx, /src/index.css
+12:02:00 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:02:10 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:02:18 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:02:30 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:02:54 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:03:04 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:03:18 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:04:28 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:04:44 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:04:48 AM [vite] (client) hmr update /src/index.css, /src/components/onboarding/WelcomeGuide.tsx
+12:05:43 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:05:55 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:06:10 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:07:00 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:08:37 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:09:02 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:09:28 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:10:33 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:11:04 AM [vite] (client) hmr update /src/components/pages/FileManagerPage.tsx, /src/index.css
+12:13:24 AM [vite] (client) hmr update /src/components/layout/SettingsModal.tsx, /src/index.css

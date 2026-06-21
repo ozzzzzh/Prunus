@@ -147,6 +147,16 @@ export default function ChatCanvas() {
       return;
     }
 
+    // 如果处于编辑模式（contenteditable），不触发快捷键
+    if (activeElement && activeElement.getAttribute('contenteditable') === 'true') {
+      return;
+    }
+
+    // 如果按下了 Ctrl 或 Cmd 键，不触发单键快捷键（避免与复制等操作冲突）
+    if (e.ctrlKey || e.metaKey) {
+      return;
+    }
+
     if (!session || !session.currentNodeId) return;
 
     const currentNode = session.nodes[session.currentNodeId];
@@ -228,13 +238,37 @@ export default function ChatCanvas() {
 
   if (!session) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-gray-400 h-full bg-[#fafafa]">
-        <div className="w-16 h-16 mb-4 rounded-2xl bg-gray-100 flex items-center justify-center">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
+      <div className="flex-1 flex flex-col items-center justify-center h-full bg-[#fafafa] canvas-texture">
+        <div className="max-w-md text-center px-6">
+          {/* 图标 */}
+          <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-leaf-50 flex items-center justify-center">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-leaf-400">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+
+          {/* 标题 */}
+          <h3 className="text-xl font-semibold text-gray-800 mb-2">
+            选择或创建一个对话文件
+          </h3>
+
+          {/* 描述 */}
+          <p className="text-gray-500 mb-6 leading-relaxed">
+            从侧边栏选择已有对话文件，或前往文件管理页面创建新的对话树。
+          </p>
+
+          {/* 操作提示 */}
+          <div className="flex flex-col items-center gap-2 text-sm text-gray-400">
+            <span className="flex items-center gap-2">
+              <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium">侧边栏</span>
+              <span>选择对话文件开始</span>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium">点击 Logo</span>
+              <span>进入文件管理</span>
+            </span>
+          </div>
         </div>
-        <p className="text-lg font-medium text-gray-500">Create or select a branch to start</p>
       </div>
     );
   }

@@ -278,12 +278,18 @@ export default function MessageNode({ data }: MessageNodeProps) {
     setEditingNode(null);
   };
 
-  // 处理编辑器粘贴事件
+  // 处理编辑器粘贴事件 - 使用浏览器默认行为，只确保粘贴纯文本
   const handleEditPaste = (e: React.ClipboardEvent) => {
+    // 不阻止默认行为，让浏览器处理粘贴
+    // 但如果需要纯文本粘贴，可以取消下面代码的注释
+    /*
     e.preventDefault();
-    e.stopPropagation();
     const text = e.clipboardData.getData('text/plain');
-    document.execCommand('insertText', false, text);
+    if (text && editRef.current) {
+      // 使用 execCommand 作为备选方案
+      document.execCommand('insertText', false, text);
+    }
+    */
   };
 
   // 收缩状态：用 NodeToolbar 显示 tooltip，避免被连接线遮挡
@@ -468,13 +474,17 @@ export default function MessageNode({ data }: MessageNodeProps) {
         >
           {isEditing ? (
             <div
-              key={editorContent ? 'initialized' : 'empty'}
               ref={editRef}
               contentEditable
               onBlur={handleEditBlur}
               onPaste={handleEditPaste}
               onKeyDown={(e) => {
+                // 阻止方向键冒泡（避免触发节点导航）
                 if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                  e.stopPropagation();
+                }
+                // 对于 Ctrl/Cmd 组合键（如 Ctrl+V），确保不冒泡
+                if (e.ctrlKey || e.metaKey) {
                   e.stopPropagation();
                 }
               }}

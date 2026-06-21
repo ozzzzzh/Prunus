@@ -37,6 +37,9 @@ interface FolderState {
   importItems: (items: Record<string, FolderItem>) => void;
   exportItems: () => Record<string, FolderItem>;
 
+  // 加载示例数据
+  loadExampleFolderItem: (sessionId: string, title: string) => string;
+
   // 辅助方法
   getTree: () => TreeNode[];
   getItem: (id: string) => FolderItem | undefined;
@@ -281,6 +284,31 @@ export const useFolderStore = create<FolderState>((set, get) => ({
 
   exportItems: () => {
     return get().items;
+  },
+
+  // ===== 加载示例数据 =====
+
+  loadExampleFolderItem: (sessionId, title) => {
+    const itemId = `folder-session-${sessionId}`;
+    const now = Date.now();
+
+    const newItem: FolderItem = {
+      id: itemId,
+      name: title,
+      type: 'session',
+      parentId: null,
+      createdAt: now,
+      updatedAt: now,
+      order: 0,
+      sessionId: sessionId,
+      pinned: false,
+    };
+
+    set((state) => ({
+      items: { ...state.items, [itemId]: newItem },
+    }));
+
+    return itemId;
   },
 
   // ===== 辅助方法 =====

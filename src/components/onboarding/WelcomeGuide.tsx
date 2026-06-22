@@ -38,7 +38,7 @@ const GUIDE_STEPS: GuideStep[] = [
   {
     icon: Lightbulb,
     title: '智能分支拆分',
-    description: '当 AI 回复包含多个要点时，使用 "Branch Out" 功能将其拆分为多个子节点，让后续的追问更加聚焦清晰。',
+    description: '当 AI 回复包含多个要点时，使用 "Branch Out" 自动拆分为多个子节点。双击编辑后选中文字右键，还可以手动摘取内容创建兄弟节点。',
     color: 'bg-amber-100 text-amber-700',
   },
   {

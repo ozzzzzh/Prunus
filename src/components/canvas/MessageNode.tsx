@@ -13,7 +13,7 @@ import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { handlePasteAsPlainText, markdownToHtml } from '../../utils/richtext';
+import { markdownToHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
 
 const preprocessMarkdown = (text: string): string => {
   return text
@@ -54,6 +54,14 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   // 临时存储编辑后的内容，用于退出编辑模式时避免闪烁
   const [pendingContent, setPendingContent] = useState<string | null>(null);
+  // 保存右键时的选中内容（防止浏览器清空选区）
+  const [savedSelection, setSavedSelection] = useState<string>('');
+  // 保存右键时的选区 Range 信息（用于移动摘取时恢复选区并删除）
+  const [savedRange, setSavedRange] = useState<ReturnType<typeof saveSelectionRange>>(null);
+  // 菜单点击动画状态
+  const [clickedItem, setClickedItem] = useState<'copy' | 'cut' | null>(null);
+  // 菜单淡出动画状态
+  const [menuFading, setMenuFading] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLDivElement>(null);
   const prevCollapsedRef = useRef(node.collapsed);
@@ -161,6 +169,34 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+
+    // 编辑模式下的特殊处理
+    if (isEditing) {
+      // 根节点不能摘取（因为没有父节点，无法创建兄弟节点）
+      if (!node.parentId) {
+        return;
+      }
+
+      // 立即保存选中的HTML内容（防止浏览器清空选区）
+      const selectionHTML = getSelectedHTML();
+      if (!selectionHTML) {
+        // 没有选中文字，不显示菜单
+        return;
+      }
+
+      // 保存选区内容和 Range 信息
+      setSavedSelection(selectionHTML);
+
+      // 保存 Range 信息（用于移动摘取时恢复并删除）
+      // 传递编辑器元素，确保路径计算正确
+      if (editRef.current) {
+        const rangeInfo = saveSelectionRange(editRef.current);
+        if (rangeInfo) {
+          setSavedRange(rangeInfo);
+        }
+      }
+    }
+
     setContextMenuPos({ x: e.clientX, y: e.clientY });
     setShowContextMenu(true);
   };
@@ -170,6 +206,101 @@ export default function MessageNode({ data }: MessageNodeProps) {
     if (node.parentId) {
       deleteNode(node.id);
     }
+    setShowContextMenu(false);
+  };
+
+  // 摘取操作 - 复制模式
+  const handleExtractCopy = () => {
+    if (!savedSelection) return;
+
+    // 创建新节点作为当前节点的兄弟节点
+    const parentId = node.parentId ?? undefined;
+
+    // 继承当前节点的角色
+    const role = isAIChat ? node.role : 'user';
+
+    // 创建新节点
+    const newNodeId = useSessionStore.getState().addMessage(role, savedSelection, parentId);
+
+    // 清空保存的选区
+    setSavedSelection('');
+
+    // 退出编辑模式
+    setEditingNode(null);
+
+    // 聚焦到新节点
+    focusNode(newNodeId);
+
+    // 关闭菜单
+    setShowContextMenu(false);
+  };
+
+  // 摘取操作 - 移动模式
+  const handleExtractCut = () => {
+    if (!savedSelection || !editRef.current) return;
+
+    const editorEl = editRef.current;
+
+    // 1. 尝试恢复选区并删除
+    let deleted = false;
+    let remainingHTML = '';
+
+    if (savedRange) {
+      // 先聚焦编辑器
+      editorEl.focus();
+
+      // 尝试恢复选区
+      const restored = restoreSelectionRange(savedRange, editorEl);
+
+      if (restored) {
+        // 使用 Range API 直接删除
+        deleted = deleteSelection();
+      }
+    }
+
+    // 2. 如果通过恢复选区删除失败，使用备用方案
+    if (!deleted) {
+      // 直接从编辑器内容中删除匹配的 HTML
+      const result = deleteHTMLContent(savedSelection, editorEl);
+      if (result !== null) {
+        remainingHTML = result;
+        deleted = true;
+      } else {
+        // 最后的备选：使用原始内容减去选中内容（简单文本匹配）
+        const originalContent = editorEl.innerHTML;
+        // 尝试直接替换 HTML
+        const newContent = originalContent.replace(savedSelection, '');
+        if (newContent !== originalContent) {
+          remainingHTML = newContent;
+          deleted = true;
+        }
+      }
+    }
+
+    // 3. 获取删除后的编辑器内容（如果还没获取）
+    if (!remainingHTML) {
+      remainingHTML = editorEl.innerHTML;
+    }
+
+    // 4. 更新当前节点内容
+    updateNodeContent(node.id, remainingHTML);
+
+    // 5. 创建新节点
+    const parentId = node.parentId ?? undefined;
+    const role = isAIChat ? node.role : 'user';
+    const newNodeId = useSessionStore.getState().addMessage(role, savedSelection, parentId);
+
+    // 6. 清空保存的选区
+    setSavedSelection('');
+    setSavedRange(null);
+
+    // 7. 退出编辑模式
+    setEditingNode(null);
+
+    // 8. 聚焦到新节点
+    focusNode(newNodeId);
+
+    // 9. 关闭菜单
     setShowContextMenu(false);
   };
 
@@ -254,7 +385,6 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const handleEditBlur = (e: React.FocusEvent) => {
     // 防止事件冒泡
     e.stopPropagation();
-    e.preventDefault();
 
     // 如果编辑器还没初始化完成，直接退出
     if (!isInitializedRef.current) {
@@ -278,18 +408,9 @@ export default function MessageNode({ data }: MessageNodeProps) {
     setEditingNode(null);
   };
 
-  // 处理编辑器粘贴事件 - 使用浏览器默认行为，只确保粘贴纯文本
-  const handleEditPaste = (e: React.ClipboardEvent) => {
+  // 处理编辑器粘贴事件 - 使用浏览器默认行为
+  const handleEditPaste = () => {
     // 不阻止默认行为，让浏览器处理粘贴
-    // 但如果需要纯文本粘贴，可以取消下面代码的注释
-    /*
-    e.preventDefault();
-    const text = e.clipboardData.getData('text/plain');
-    if (text && editRef.current) {
-      // 使用 execCommand 作为备选方案
-      document.execCommand('insertText', false, text);
-    }
-    */
   };
 
   // 收缩状态：用 NodeToolbar 显示 tooltip，避免被连接线遮挡
@@ -483,9 +604,9 @@ export default function MessageNode({ data }: MessageNodeProps) {
                 if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                   e.stopPropagation();
                 }
-                // 对于 Ctrl/Cmd 组合键（如 Ctrl+V），确保不冒泡
-                if (e.ctrlKey || e.metaKey) {
-                  e.stopPropagation();
+                // 如果按 Escape，退出编辑模式
+                if (e.key === 'Escape') {
+                  editRef.current?.blur();
                 }
               }}
               className="outline-none min-h-[60px] w-full max-w-none break-words prose prose-sm"
@@ -540,19 +661,92 @@ export default function MessageNode({ data }: MessageNodeProps) {
       </NodeToolbar>
 
       {/* 右键菜单 - 使用 Portal 渲染到 body */}
-      {showContextMenu && node.parentId && createPortal(
+      {showContextMenu && createPortal(
         <div
-          className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
+          className={cn(
+            "fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px] transition-opacity duration-150",
+            menuFading && "opacity-0"
+          )}
           style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+          onMouseDown={(e) => {
+            // 只阻止冒泡，不阻止默认行为（让 Ctrl+C/V 仍然工作）
+            e.stopPropagation();
+          }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={handleDelete}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-          >
-            <Trash2 size={14} />
-            Delete
-          </button>
+          {/* 有保存的选中内容时显示摘取菜单 */}
+          {savedSelection ? (
+            <>
+              <div className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100">
+                摘取选中内容
+              </div>
+              {/* 选中内容预览 */}
+              <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50 border-b border-gray-100 max-w-[200px]">
+                <span className="line-clamp-2 break-words">
+                  "{savedSelection.replace(/<[^>]*>/g, '')}"
+                </span>
+              </div>
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setClickedItem('copy');
+                  setMenuFading(true);
+                  setTimeout(() => {
+                    handleExtractCopy();
+                    setClickedItem(null);
+                    setMenuFading(false);
+                  }, 150);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-leaf-50 hover:text-leaf-700 transition-all duration-150",
+                  clickedItem === 'copy' && "bg-leaf-100 text-leaf-700 scale-[0.98]"
+                )}
+              >
+                <span className="text-base">📋</span>
+                <span>复制摘取</span>
+              </button>
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setClickedItem('cut');
+                  setMenuFading(true);
+                  setTimeout(() => {
+                    handleExtractCut();
+                    setClickedItem(null);
+                    setMenuFading(false);
+                  }, 150);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-leaf-50 hover:text-leaf-700 transition-all duration-150",
+                  clickedItem === 'cut' && "bg-leaf-100 text-leaf-700 scale-[0.98]"
+                )}
+              >
+                <span className="text-base">✂️</span>
+                <span>移动摘取</span>
+              </button>
+            </>
+          ) : (
+            /* 非编辑模式下显示删除菜单 */
+            node.parentId && (
+              <button
+                onClick={handleDelete}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 size={14} />
+                <span>删除节点</span>
+              </button>
+            )
+          )}
         </div>,
         document.body
       )}

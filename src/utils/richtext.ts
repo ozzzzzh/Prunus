@@ -561,3 +561,250 @@ export function isStrikethrough(): boolean {
 export function hasHighlight(color?: string): boolean {
   return hasFormat('span', { property: 'background-color', value: color });
 }
+
+/**
+ * ===== 摘取功能相关工具函数 =====
+ */
+
+/**
+ * 检测是否有选中的文字（用于摘取功能）
+ */
+export function hasSelection(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+
+  const range = selection.getRangeAt(0);
+  return !range.collapsed && range.toString().trim().length > 0;
+}
+
+/**
+ * 获取选中的 HTML 内容
+ * 返回选区的 HTML 字符串，用于创建新节点
+ */
+export function getSelectedHTML(): string {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return '';
+
+  const range = selection.getRangeAt(0);
+  if (range.collapsed) return '';
+
+  // 克隆选区内容
+  const fragment = range.cloneContents();
+
+  // 将 fragment 转换为 HTML 字符串
+  const div = document.createElement('div');
+  div.appendChild(fragment);
+
+  return div.innerHTML;
+}
+
+/**
+ * 保存选区的 Range 对象（用于移动摘取）
+ * 返回 Range 的序列化信息，可以用于恢复
+ * @param editorElement 编辑器根元素（可选，如果不提供则自动查找）
+ */
+export function saveSelectionRange(editorElement?: HTMLElement): {
+  startContainerPath: number[];
+  startOffset: number;
+  endContainerPath: number[];
+  endOffset: number;
+} | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+
+  const range = selection.getRangeAt(0);
+  if (range.collapsed) return null;
+
+  // 获取从编辑器根元素到选区节点的路径
+  const getPath = (node: Node, root: HTMLElement): number[] => {
+    const path: number[] = [];
+    let current = node;
+
+    while (current && current !== root) {
+      const parent = current.parentNode;
+      if (!parent) break;
+
+      // 找到当前节点在父节点中的索引
+      const index = Array.from(parent.childNodes).indexOf(current as ChildNode);
+      path.unshift(index);
+      current = parent;
+    }
+
+    return path;
+  };
+
+  // 如果提供了编辑器元素，直接使用
+  let editorRoot = editorElement;
+
+  // 如果没有提供，尝试从 DOM 结构查找
+  if (!editorRoot) {
+    editorRoot = range.commonAncestorContainer.parentElement?.closest('.editing-mode') as HTMLElement;
+  }
+
+  if (!editorRoot) return null;
+
+  return {
+    startContainerPath: getPath(range.startContainer, editorRoot),
+    startOffset: range.startOffset,
+    endContainerPath: getPath(range.endContainer, editorRoot),
+    endOffset: range.endOffset,
+  };
+}
+
+/**
+ * 恢复选区的 Range 对象（用于移动摘取）
+ * @param savedRange 保存的 Range 信息
+ * @param editorElement 编辑器根元素
+ */
+export function restoreSelectionRange(
+  savedRange: {
+    startContainerPath: number[];
+    startOffset: number;
+    endContainerPath: number[];
+    endOffset: number;
+  },
+  editorElement: HTMLElement
+): boolean {
+  const getNodeByPath = (path: number[], root: HTMLElement): Node | null => {
+    let current: Node = root;
+
+    for (const index of path) {
+      if (!current.childNodes || index >= current.childNodes.length) {
+        return null;
+      }
+      current = current.childNodes[index];
+    }
+
+    return current;
+  };
+
+  try {
+    const startContainer = getNodeByPath(savedRange.startContainerPath, editorElement);
+    const endContainer = getNodeByPath(savedRange.endContainerPath, editorElement);
+
+    if (!startContainer || !endContainer) {
+      console.warn('restoreSelectionRange: Could not find container nodes');
+      return false;
+    }
+
+    const range = document.createRange();
+
+    // 安全地设置起始位置
+    const maxStartOffset = startContainer.nodeType === Node.TEXT_NODE
+      ? startContainer.textContent?.length || 0
+      : startContainer.childNodes.length;
+    const safeStartOffset = Math.min(savedRange.startOffset, maxStartOffset);
+    range.setStart(startContainer, safeStartOffset);
+
+    // 安全地设置结束位置
+    const maxEndOffset = endContainer.nodeType === Node.TEXT_NODE
+      ? endContainer.textContent?.length || 0
+      : endContainer.childNodes.length;
+    const safeEndOffset = Math.min(savedRange.endOffset, maxEndOffset);
+    range.setEnd(endContainer, safeEndOffset);
+
+    const selection = window.getSelection();
+    if (!selection) return false;
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    return true;
+  } catch (error) {
+    console.error('Failed to restore selection:', error);
+    return false;
+  }
+}
+
+/**
+ * 删除当前选区内容（用于移动摘取）
+ * 直接使用 Range API 删除，不依赖 execCommand
+ */
+export function deleteSelection(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+
+  const range = selection.getRangeAt(0);
+  if (range.collapsed) return false;
+
+  try {
+    // 直接使用 Range API 删除内容
+    range.deleteContents();
+    // 清空选区
+    selection.removeAllRanges();
+    return true;
+  } catch (error) {
+    console.error('Failed to delete selection:', error);
+    return false;
+  }
+}
+
+/**
+ * 直接从编辑器中删除指定范围的 HTML 内容
+ * 通过查找包含该内容的边界来删除
+ * @param htmlContent 要删除的 HTML 内容
+ * @param editorElement 编辑器元素
+ * @returns 删除后的 HTML 内容，如果删除失败返回 null
+ */
+export function deleteHTMLContent(
+  htmlContent: string,
+  editorElement: HTMLElement
+): string | null {
+  // 创建一个临时元素来解析 HTML
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = htmlContent;
+
+  // 在编辑器中查找并删除匹配的内容
+  // 策略：遍历编辑器的所有文本节点，找到包含目标内容的节点
+  const walker = document.createTreeWalker(
+    editorElement,
+    NodeFilter.SHOW_TEXT,
+    null
+  );
+
+  // 获取要删除的纯文本内容
+  const textToDelete = tempDiv.textContent || '';
+  if (!textToDelete) return null;
+
+  let found = false;
+  let node: Text | null;
+
+  while ((node = walker.nextNode() as Text | null)) {
+    if (node.textContent?.includes(textToDelete)) {
+      // 找到包含目标文本的节点
+      const nodeText = node.textContent;
+      const index = nodeText.indexOf(textToDelete);
+
+      if (index !== -1) {
+        // 分割文本节点并删除目标部分
+        const before = nodeText.substring(0, index);
+        const after = nodeText.substring(index + textToDelete.length);
+
+        const parent = node.parentNode;
+        if (parent) {
+          // 替换为新的文本节点
+          const newText = document.createTextNode(before + after);
+          parent.replaceChild(newText, node);
+          found = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (found) {
+    return editorElement.innerHTML;
+  }
+
+  return null;
+}
+
+/**
+ * 清空选区
+ */
+export function clearSelection(): void {
+  const selection = window.getSelection();
+  if (selection) {
+    selection.removeAllRanges();
+  }
+}

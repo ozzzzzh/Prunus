@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@xyflow/react": "^12.10.2",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
@@ -26,7 +29,6 @@
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "unified": "^11.0.5",
-    "yarn": "^1.22.22",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

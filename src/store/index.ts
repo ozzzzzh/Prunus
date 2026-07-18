@@ -9,6 +9,7 @@ export { useSessionStore, type ChatSession } from './sessionStore';
 export { useUIStore } from './uiStore';
 export { useAPIConfigStore, type APIConfig } from './apiConfigStore';
 export { useGenerationStore } from './generationStore';
+export { useFolderStore } from './folderStore';
 
 // 向后兼容：统一 Store（内部组合使用拆分 Store）
 export { useChatStore } from './chatStore';

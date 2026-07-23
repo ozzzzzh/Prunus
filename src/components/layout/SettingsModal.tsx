@@ -1,11 +1,14 @@
-import { X, Download, FileJson } from 'lucide-react';
+import { X, Download, Brain } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import { useSessionStore } from '../../store/sessionStore';
+import { useAPIConfigStore } from '../../store/apiConfigStore';
 
 export default function SettingsModal() {
   const isSettingsOpen = useUIStore(state => state.isSettingsOpen);
   const toggleSettings = useUIStore(state => state.toggleSettings);
   const sessions = useSessionStore(state => state.sessions);
+  const config = useAPIConfigStore(state => state.config);
+  const updateConfig = useAPIConfigStore(state => state.updateConfig);
 
   // 导出 sessions 为 JSON 文件
   const handleExport = () => {
@@ -34,22 +37,39 @@ export default function SettingsModal() {
           </button>
         </div>
 
-        {/* API 配置说明 */}
-        {/* <div className="mb-6 p-4 bg-leaf-50 rounded-xl border border-leaf-200">
-          <h3 className="text-sm font-semibold text-leaf-800 mb-2">🔑 API 配置</h3>
-          <p className="text-sm text-leaf-700 leading-relaxed">
-            API Key 和 Base URL 现在通过环境变量配置，更安全。
-          </p>
-          <div className="mt-3 text-xs text-leaf-600 bg-white/50 rounded-lg p-3 font-mono">
-            <p className="mb-1"># 在项目根目录创建 .env.local 文件：</p>
-            <p className="text-gray-600">LLM_BASE_URL=https://api.openai.com/v1</p>
-            <p className="text-gray-600">LLM_API_KEY=sk-your-key-here</p>
-            <p className="text-gray-600">LLM_MODEL=gpt-3.5-turbo</p>
+        {/* AI 推理设置 */}
+        <div className="mb-6 p-4 bg-amber-50 rounded-xl border border-amber-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+                <Brain size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">深度思考</h3>
+                <p className="text-xs text-gray-500 mt-0.5">让 AI 先思考再回答</p>
+              </div>
+            </div>
+            {/* Toggle Switch */}
+            <button
+              onClick={() => updateConfig({ enableThinking: !config.enableThinking })}
+              className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${
+                config.enableThinking ? 'bg-amber-500' : 'bg-gray-300'
+              }`}
+              title={config.enableThinking ? '关闭深度思考' : '开启深度思考'}
+            >
+              <span
+                className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${
+                  config.enableThinking ? 'left-7' : 'left-1'
+                }`}
+              />
+            </button>
           </div>
-          <p className="text-xs text-leaf-500 mt-2">
-            💡 参考 .env.example 文件进行配置
-          </p>
-        </div> */}
+          {config.enableThinking && (
+            <p className="text-xs text-amber-600 mt-3 bg-amber-100/50 rounded-lg px-2 py-1.5">
+              💡 已开启：AI 会先展示思考过程，再给出最终答案
+            </p>
+          )}
+        </div>
 
         {/* 数据管理 */}
         <div className="pt-4 border-t border-gray-100">

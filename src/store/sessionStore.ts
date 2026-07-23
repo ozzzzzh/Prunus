@@ -35,7 +35,8 @@ interface SessionState {
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
   addBranchedMessages: (role: 'user' | 'assistant' | 'system', contents: string[], parentId?: string) => void;
-  updateNodeContent: (nodeId: string, content: string) => void;
+  updateNodeContent: (nodeId: string, content: string, reasoning?: string) => void;
+  toggleNodeReasoningCollapse: (nodeId: string) => void;
   deleteNode: (nodeId: string) => void;
   splitNodeIntoBranches: (nodeId: string, newOutlineContent: string, branchesContent: string[]) => void;
   focusNode: (nodeId: string) => void;
@@ -280,7 +281,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateNodeContent: (nodeId, content) => {
+  updateNodeContent: (nodeId, content, reasoning) => {
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -300,6 +301,38 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               [nodeId]: {
                 ...node,
                 content,
+                reasoning: reasoning !== undefined ? reasoning : (node as any).reasoning,
+                reasoningCollapsed: reasoning ? true : (node as any).reasoningCollapsed,
+                updatedAt: Date.now(),
+              },
+            },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  toggleNodeReasoningCollapse: (nodeId) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const node = currentSession.nodes[nodeId];
+      if (!node) return state;
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: {
+                ...node,
+                reasoningCollapsed: !(node as any).reasoningCollapsed,
                 updatedAt: Date.now(),
               },
             },

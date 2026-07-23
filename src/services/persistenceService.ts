@@ -261,11 +261,6 @@ export async function importFromJSON(json: string): Promise<void> {
 export async function clearAllData(): Promise<void> {
   await repository.session.clear();
   await repository.folder.clear();
-  await repository.settings.saveAPIConfig({
-    apiKey: '',
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-3.5-turbo',
-  });
 
   useSessionStore.getState().importSessions({});
   useFolderStore.getState().importItems({});

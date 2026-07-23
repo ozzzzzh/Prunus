@@ -14,6 +14,9 @@ interface GenerationState {
   // 流式内容暂存（不触发 sessionStore 更新）
   streamingContent: string;
 
+  // 流式思考内容暂存
+  streamingReasoning: string;
+
   // 是否正在 reasoning（模型思考过程）
   isReasoning: boolean;
 
@@ -23,6 +26,7 @@ interface GenerationState {
   // 操作
   setGeneratingNodeId: (nodeId: string | null) => void;
   appendStreamingContent: (content: string) => void;
+  appendStreamingReasoning: (reasoning: string) => void;
   setIsReasoning: (isReasoning: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;
@@ -34,16 +38,32 @@ interface GenerationState {
 export const useGenerationStore = create<GenerationState>((set, get) => ({
   generatingNodeId: null,
   streamingContent: '',
+  streamingReasoning: '',
   isReasoning: false,
   error: null,
 
-  setGeneratingNodeId: (nodeId) => set({ generatingNodeId: nodeId, streamingContent: '', isReasoning: false, error: null }),
+  setGeneratingNodeId: (nodeId) => set({
+    generatingNodeId: nodeId,
+    streamingContent: '',
+    streamingReasoning: '',
+    isReasoning: false,
+    error: null
+  }),
   appendStreamingContent: (content) => set((state) => ({
     streamingContent: state.streamingContent + content,
   })),
+  appendStreamingReasoning: (reasoning) => set((state) => ({
+    streamingReasoning: state.streamingReasoning + reasoning,
+  })),
   setIsReasoning: (isReasoning) => set({ isReasoning }),
   setError: (error) => set({ error }),
-  reset: () => set({ generatingNodeId: null, streamingContent: '', isReasoning: false, error: null }),
+  reset: () => set({
+    generatingNodeId: null,
+    streamingContent: '',
+    streamingReasoning: '',
+    isReasoning: false,
+    error: null
+  }),
 
   isGenerating: () => get().generatingNodeId !== null,
 }));

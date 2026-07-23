@@ -8,7 +8,10 @@ const DEFAULT_MODEL = (import.meta as any).env?.VITE_LLM_MODEL || 'gpt-3.5-turbo
 
 export async function generateAIResponse(
   messages: { role: 'user' | 'assistant' | 'system', content: string }[],
-  onChunk?: (data: { content: string; reasoning?: string }) => void
+  onChunk?: (data: { content: string; reasoning?: string }) => void,
+  options?: {
+    enableThinking?: boolean;  // 是否开启深度思考
+  }
 ): Promise<{ content: string; reasoning: string }> {
   // 使用本地代理路径，API Key 由代理从环境变量添加
   // 需要构造完整 URL（OpenAI SDK 要求完整 URL）
@@ -35,12 +38,25 @@ export async function generateAIResponse(
   });
 
   try {
-    const stream = await client.chat.completions.create({
+    // 构建请求参数
+    const requestParams: Record<string, unknown> = {
       model: model.trim() || DEFAULT_MODEL,
       messages: messages,
       stream: true,
       temperature: 0.7,
-    });
+    };
+
+    // GLM-5 thinking 控制（智谱格式）
+    // 使用联合类型避免拼写错误
+    type ThinkingType = 'enabled' | 'disabled';
+
+    if (options?.enableThinking !== undefined) {
+      const thinkingType: ThinkingType = options.enableThinking ? 'enabled' : 'disabled';
+      requestParams.thinking = { type: thinkingType };
+    }
+    // 如果不传 options.enableThinking，使用模型默认（GLM-5 默认开启）
+
+    const stream = await client.chat.completions.create(requestParams as any);
 
     let fullContent = '';
     let fullReasoning = '';
@@ -83,3 +99,4 @@ export async function generateAIResponse(
     throw new Error((typeof err.message === 'string' ? err.message : '') || 'Unknown API Error occurred');
   }
 }
+

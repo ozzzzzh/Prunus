@@ -4,6 +4,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
+import { useAPIConfigStore } from '../../store/apiConfigStore';
 import type { AIRole } from '../../types';
 import { isAIChatNode } from '../../types';
 import { generateAIResponse } from '../../utils/llmApi';
@@ -20,6 +21,7 @@ export default function ChatInput() {
   const activeSessionId = useChatStore(state => state.activeSessionId);
   const sessions = useChatStore(state => state.sessions);
   const editingNodeId = useUIStore(state => state.editingNodeId);
+  const enableThinking = useAPIConfigStore(state => state.config.enableThinking) ?? false;
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
   const activeNode = session && session.currentNodeId ? session.nodes[session.currentNodeId] : null;
@@ -64,15 +66,21 @@ export default function ChatInput() {
 
       await generateAIResponse(history, (chunk) => {
         // 检测是否在 reasoning（有 reasoning_content 但 content 为空）
-        const isReasoning = chunk.reasoning && chunk.reasoning.length > 0 && !chunk.content;
+        const isReasoning = Boolean(chunk.reasoning && chunk.reasoning.length > 0 && !chunk.content);
         genStore.setIsReasoning(isReasoning);
         genStore.appendStreamingContent(chunk.content);
+        // 同时接收 reasoning 内容
+        if (chunk.reasoning) {
+          genStore.appendStreamingReasoning(chunk.reasoning);
+        }
+      }, {
+        enableThinking,
       });
 
       // 流结束后一次性写入 sessionStore
       // 注意：要用 getState() 获取最新状态，不能用之前的快照
-      const finalContent = useGenerationStore.getState().streamingContent;
-      useSessionStore.getState().updateNodeContent(aiNodeId, finalContent);
+      const { streamingContent, streamingReasoning } = useGenerationStore.getState();
+      useSessionStore.getState().updateNodeContent(aiNodeId, streamingContent, streamingReasoning || undefined);
 
       // 延迟 reset，确保 React 渲染完成后再清空
       setTimeout(() => {

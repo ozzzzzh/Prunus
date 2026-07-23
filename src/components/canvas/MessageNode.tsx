@@ -1,9 +1,9 @@
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2 } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import type { PrunusNode, NodeMarker } from '../../types';
+import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
 import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -79,6 +79,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
 
   // 流式内容
   const streamingContent = useGenerationStore((state) => state.streamingContent);
+  const streamingReasoning = useGenerationStore((state) => state.streamingReasoning);
   const streamingNodeId = useGenerationStore((state) => state.generatingNodeId);
   const isReasoning = useGenerationStore((state) => state.isReasoning);
 
@@ -118,6 +119,19 @@ export default function MessageNode({ data }: MessageNodeProps) {
 
   // 判断当前节点是否正在流式生成
   const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
+
+  // Reasoning 相关状态和内容
+  const [reasoningExpanded, setReasoningExpanded] = useState(true);
+  const nodeReasoning = isAIChat ? (node as AIChatNode).reasoning : undefined;
+  const nodeReasoningCollapsed = isAIChat ? (node as AIChatNode).reasoningCollapsed : undefined;
+  const displayReasoning = isStreaming ? streamingReasoning : nodeReasoning;
+
+  // 当流式生成完成后，同步折叠状态
+  useEffect(() => {
+    if (!isStreaming && nodeReasoningCollapsed !== undefined) {
+      setReasoningExpanded(!nodeReasoningCollapsed);
+    }
+  }, [isStreaming, nodeReasoningCollapsed]);
 
   // 获取显示内容：优先使用临时内容（避免退出编辑模式时闪烁），然后是流式内容，最后是节点内容
   const displayContent = pendingContent || ((isStreaming && streamingContent.length > 0) ? streamingContent : node.content);
@@ -586,6 +600,46 @@ export default function MessageNode({ data }: MessageNodeProps) {
             )}
           </div>
         </div>
+
+        {/* Reasoning 内容 - 思考过程 */}
+        {displayReasoning && displayReasoning.length > 0 && !isEditing && (
+          <div className="mb-3 border-l-2 border-amber-300 bg-amber-50/50 rounded-r-lg overflow-hidden">
+            {/* 标题栏 - 可点击折叠 */}
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-amber-100/50 transition-colors"
+              onClick={() => setReasoningExpanded(!reasoningExpanded)}
+            >
+              {isStreaming && isReasoning ? (
+                <Loader2 size={12} className="animate-spin text-amber-600" />
+              ) : (
+                <Lightbulb size={12} className="text-amber-600" />
+              )}
+              <span className="text-xs font-medium text-amber-700">
+                {isStreaming ? '思考中...' : '思考过程'}
+              </span>
+              <span className="ml-auto">
+                {reasoningExpanded ? (
+                  <ChevronDown size={14} className="text-amber-500" />
+                ) : (
+                  <ChevronRight size={14} className="text-amber-500" />
+                )}
+              </span>
+            </div>
+            {/* 内容区域 */}
+            {reasoningExpanded && (
+              <div className="px-3 py-2 text-xs text-gray-600 leading-relaxed border-t border-amber-200/50 max-h-[150px] overflow-y-auto custom-scrollbar">
+                <div className="prose prose-xs max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
+                  >
+                    {preprocessMarkdown(displayReasoning || '')}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 主内容 */}
         <div

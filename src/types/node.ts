@@ -75,6 +75,8 @@ export interface BaseNode {
 export interface AIChatNode extends BaseNode {
   type: 'ai-chat';
   role: AIRole;
+  reasoning?: string;  // AI 思考过程（深度思考模式）
+  reasoningCollapsed?: boolean;  // 思考内容是否折叠
 }
 
 /**

@@ -11,6 +11,7 @@ import SettingsModal from './components/layout/SettingsModal';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
 import { WelcomeGuide, HelpPanel } from './components/onboarding';
+import ExpandedView from './components/expanded/ExpandedView';
 import { useSessionStore } from './store/sessionStore';
 import { useFolderStore } from './store/folderStore';
 import { useUIStore } from './store/uiStore';
@@ -24,6 +25,7 @@ function App() {
   const setCurrentPage = useUIStore(state => state.setCurrentPage);
   const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed);
   const toggleSidebar = useUIStore(state => state.toggleSidebar);
+  const expandedNodeId = useUIStore(state => state.expandedNodeId);
 
   const folderItems = useFolderStore(state => state.items);
 
@@ -153,7 +155,7 @@ function App() {
         {/* Canvas 和输入区域 */}
         <div className="flex-1 overflow-hidden">
           <ReactFlowProvider>
-            <ChatCanvas />
+            {expandedNodeId ? <ExpandedView /> : <ChatCanvas />}
           </ReactFlowProvider>
         </div>
         <ChatInput />

@@ -22,6 +22,9 @@ export default function ChatInput() {
   const sessions = useChatStore(state => state.sessions);
   const editingNodeId = useUIStore(state => state.editingNodeId);
   const enableThinking = useAPIConfigStore(state => state.config.enableThinking) ?? false;
+  const expandedNodeId = useUIStore(state => state.expandedNodeId);
+  const setExpandedNode = useUIStore(state => state.setExpandedNode);
+  const focusNode = useSessionStore(state => state.focusNode);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
   const activeNode = session && session.currentNodeId ? session.nodes[session.currentNodeId] : null;
@@ -36,6 +39,11 @@ export default function ChatInput() {
     const userNodeId = addMessage('user', messageContent);
     setIsLoading(true);
     setGeneratingNodeId(userNodeId);
+
+    // 如果在展开模式，更新展开节点ID
+    if (expandedNodeId) {
+      setExpandedNode(userNodeId);
+    }
 
     try {
       const latestState = useChatStore.getState();
@@ -60,6 +68,11 @@ export default function ChatInput() {
       // 先创建空的 assistant 节点
       const aiNodeId = useSessionStore.getState().addMessage('assistant', '', userNodeId);
 
+      // 更新展开节点ID（如果在展开模式）
+      if (expandedNodeId) {
+        setExpandedNode(aiNodeId);
+      }
+
       // 用 generationStore 暂存流式内容
       const genStore = useGenerationStore.getState();
       genStore.setGeneratingNodeId(aiNodeId);
@@ -81,6 +94,9 @@ export default function ChatInput() {
       // 注意：要用 getState() 获取最新状态，不能用之前的快照
       const { streamingContent, streamingReasoning } = useGenerationStore.getState();
       useSessionStore.getState().updateNodeContent(aiNodeId, streamingContent, streamingReasoning || undefined);
+
+      // 聚焦到新的 AI 节点
+      focusNode(aiNodeId);
 
       // 延迟 reset，确保 React 渲染完成后再清空
       setTimeout(() => {

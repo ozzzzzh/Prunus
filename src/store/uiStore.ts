@@ -49,6 +49,13 @@ interface UIState {
   dismissedHints: Record<string, boolean>;
   dismissHint: (hintId: string) => void;
   hasDismissedHint: (hintId: string) => boolean;
+
+  // ===== 展开模式 =====
+
+  // 展开的节点ID（仅叶子节点可展开）
+  expandedNodeId: string | null;
+  setExpandedNode: (nodeId: string | null) => void;
+  exitExpandedView: () => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -85,6 +92,12 @@ export const useUIStore = create<UIState>()(
         dismissedHints: { ...state.dismissedHints, [hintId]: true }
       })),
       hasDismissedHint: (hintId) => get().dismissedHints[hintId] === true,
+
+      // ===== 展开模式 =====
+
+      expandedNodeId: null,
+      setExpandedNode: (nodeId) => set({ expandedNodeId: nodeId }),
+      exitExpandedView: () => set({ expandedNodeId: null }),
     }),
     {
       name: 'prunus-ui-storage',

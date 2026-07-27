@@ -1,5 +1,5 @@
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -47,6 +47,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const updateNodeContent = useSessionStore((state) => state.updateNodeContent);
   const editingNodeId = useUIStore((state) => state.editingNodeId);
   const setEditingNode = useUIStore((state) => state.setEditingNode);
+  const setExpandedNode = useUIStore((state) => state.setExpandedNode);
   const [isSplitting, setIsSplitting] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -568,6 +569,20 @@ export default function MessageNode({ data }: MessageNodeProps) {
               >
                 <SplitSquareHorizontal size={14} />
                 <span className="text-[10px] font-medium">Branch Out</span>
+              </button>
+            )}
+
+            {/* 展开按钮：仅叶子节点显示 */}
+            {isActive && node.childrenIds.length === 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedNode(node.id);
+                }}
+                title="展开链路编辑"
+                className="p-1.5 text-gray-400 hover:text-leaf-600 hover:bg-leaf-50 rounded-md transition-colors"
+              >
+                <Maximize2 size={14} />
               </button>
             )}
 

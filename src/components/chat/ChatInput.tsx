@@ -158,7 +158,7 @@ export default function ChatInput() {
   const isEditing = !!editingNodeId;
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-10">
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-10" data-tour="chat-input">
       <div className="bg-white rounded-2xl shadow-[0_8px_30px_-4px_rgba(0,0,0,0.1)] border border-gray-200 overflow-hidden flex flex-col">
         {/* 顶部区域：二级菜单或 Replying to */}
         {isEditing && activeSubMenu ? (
@@ -231,6 +231,7 @@ export default function ChatInput() {
                 type="submit"
                 disabled={!input.trim() || isLoading}
                 className="p-3 bg-leaf-600 hover:bg-leaf-700 disabled:bg-leaf-100 disabled:text-leaf-300 text-white rounded-xl transition-colors mb-1"
+                data-tour="send-btn"
               >
                 {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
               </button>

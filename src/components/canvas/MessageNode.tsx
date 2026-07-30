@@ -118,6 +118,9 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const isClickable = !isActive && !isUser;
   const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
 
+  // 判断是否为根节点
+  const isRootNode = !node.parentId;
+
   // 判断当前节点是否正在流式生成
   const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
 
@@ -511,6 +514,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
               : "border-gray-200 bg-white/80 opacity-60 shadow-sm z-0",
           !isEditing && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
         )}
+        data-tour={isActive ? "current-node" : isRootNode ? "root-node" : undefined}
       >
         {node.marker && (
           <div
@@ -566,6 +570,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
                 onClick={handleSplit}
                 title="Split into multiple branches"
                 className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex items-center gap-1"
+                data-tour="branch-out-btn"
               >
                 <SplitSquareHorizontal size={14} />
                 <span className="text-[10px] font-medium">Branch Out</span>
@@ -581,6 +586,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
                 }}
                 title="展开链路编辑"
                 className="p-1.5 text-gray-400 hover:text-leaf-600 hover:bg-leaf-50 rounded-md transition-colors"
+                data-tour="expand-btn"
               >
                 <Maximize2 size={14} />
               </button>

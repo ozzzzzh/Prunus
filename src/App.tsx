@@ -10,7 +10,7 @@ import ChatInput from './components/chat/ChatInput';
 import SettingsModal from './components/layout/SettingsModal';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
-import { WelcomeGuide, HelpPanel } from './components/onboarding';
+import { WelcomeGuide, HelpPanel, InteractiveTour } from './components/onboarding';
 import ExpandedView from './components/expanded/ExpandedView';
 import { useSessionStore } from './store/sessionStore';
 import { useFolderStore } from './store/folderStore';
@@ -168,6 +168,9 @@ function App() {
 
       {/* 新用户引导 */}
       <WelcomeGuide />
+
+      {/* 交互式引导 */}
+      <InteractiveTour />
     </div>
   );
 }

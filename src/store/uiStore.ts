@@ -6,6 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { TourState, TourStats } from '../types/tour';
 
 // 页面类型
 export type PageType = 'canvas' | 'fileManager';
@@ -56,6 +57,32 @@ interface UIState {
   expandedNodeId: string | null;
   setExpandedNode: (nodeId: string | null) => void;
   exitExpandedView: () => void;
+
+  // ===== 交互式引导 =====
+
+  // 引导状态
+  tourState: TourState;
+  startTour: () => void;
+  advanceTourStep: () => void;
+  skipTourStep: () => void;
+  skipTour: () => void;
+  completeTour: () => void;
+  resetTour: () => void;
+
+  // 引导统计
+  tourStats: TourStats;
+  incrementTourStat: (stat: keyof TourStats) => void;
+
+  // 用户行为追踪（用于智能提示）
+  userHasInteracted: {
+    hasCreatedSession: boolean;
+    hasSentMessage: boolean;
+    hasUsedBranchOut: boolean;
+    hasEditedNode: boolean;
+    hasUsedKeyboardNav: boolean;
+    hasExtractedContent: boolean;
+  };
+  recordUserInteraction: (action: keyof UIState['userHasInteracted']) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -98,12 +125,142 @@ export const useUIStore = create<UIState>()(
       expandedNodeId: null,
       setExpandedNode: (nodeId) => set({ expandedNodeId: nodeId }),
       exitExpandedView: () => set({ expandedNodeId: null }),
+
+      // ===== 交互式引导 =====
+
+      tourState: {
+        isActive: false,
+        currentPhase: 0,
+        currentStepIndex: 0,
+        completedSteps: [],
+        skippedSteps: [],
+        startedAt: null,
+        completedAt: null,
+      },
+
+      startTour: () => set((state) => ({
+        tourState: {
+          ...state.tourState,
+          isActive: true,
+          currentPhase: 1,
+          currentStepIndex: 0,
+          startedAt: new Date().toISOString(),
+        }
+      })),
+
+      advanceTourStep: () => set((state) => {
+        const { tourState } = state;
+        const currentStep = tourState.completedSteps.length;
+        const totalSteps = 10; // TOUR_STEPS.length
+
+        if (currentStep >= totalSteps - 1) {
+          // 完成引导
+          return {
+            tourState: {
+              ...tourState,
+              isActive: false,
+              completedAt: new Date().toISOString(),
+              completedSteps: [...tourState.completedSteps, `step-${currentStep}`],
+            }
+          };
+        }
+
+        // 进入下一步
+        const newPhase = Math.floor((currentStep + 1) / 3) + 1 as 1 | 2 | 3 | 4;
+        return {
+          tourState: {
+            ...tourState,
+            currentPhase: newPhase,
+            currentStepIndex: (currentStep + 1) % 3,
+            completedSteps: [...tourState.completedSteps, `step-${currentStep}`],
+          }
+        };
+      }),
+
+      skipTourStep: () => set((state) => {
+        const { tourState } = state;
+        const currentStep = tourState.completedSteps.length + tourState.skippedSteps.length;
+
+        return {
+          tourState: {
+            ...tourState,
+            skippedSteps: [...tourState.skippedSteps, `step-${currentStep}`],
+          }
+        };
+      }),
+
+      skipTour: () => set((state) => ({
+        tourState: {
+          ...state.tourState,
+          isActive: false,
+          completedAt: new Date().toISOString(),
+        }
+      })),
+
+      completeTour: () => set((state) => ({
+        tourState: {
+          ...state.tourState,
+          isActive: false,
+          completedAt: new Date().toISOString(),
+        }
+      })),
+
+      resetTour: () => set({
+        tourState: {
+          isActive: false,
+          currentPhase: 0,
+          currentStepIndex: 0,
+          completedSteps: [],
+          skippedSteps: [],
+          startedAt: null,
+          completedAt: null,
+        },
+        tourStats: {
+          messagesCreated: 0,
+          branchesCreated: 0,
+          nodesNavigated: 0,
+          editsMade: 0,
+        },
+      }),
+
+      tourStats: {
+        messagesCreated: 0,
+        branchesCreated: 0,
+        nodesNavigated: 0,
+        editsMade: 0,
+      },
+
+      incrementTourStat: (stat) => set((state) => ({
+        tourStats: {
+          ...state.tourStats,
+          [stat]: state.tourStats[stat] + 1,
+        }
+      })),
+
+      userHasInteracted: {
+        hasCreatedSession: false,
+        hasSentMessage: false,
+        hasUsedBranchOut: false,
+        hasEditedNode: false,
+        hasUsedKeyboardNav: false,
+        hasExtractedContent: false,
+      },
+
+      recordUserInteraction: (action) => set((state) => ({
+        userHasInteracted: {
+          ...state.userHasInteracted,
+          [action]: true,
+        }
+      })),
     }),
     {
       name: 'prunus-ui-storage',
       partialize: (state) => ({
         onboardingCompleted: state.onboardingCompleted,
         dismissedHints: state.dismissedHints,
+        tourState: state.tourState,
+        tourStats: state.tourStats,
+        userHasInteracted: state.userHasInteracted,
       }),
     }
   )

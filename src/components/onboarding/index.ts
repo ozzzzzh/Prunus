@@ -5,3 +5,4 @@
 export { default as ContextualHint } from './ContextualHint';
 export { default as HelpPanel } from './HelpPanel';
 export { default as WelcomeGuide } from './WelcomeGuide';
+export { default as InteractiveTour } from './InteractiveTour';

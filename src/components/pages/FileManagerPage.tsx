@@ -339,6 +339,7 @@ export default function FileManagerPage() {
                 <button
                   onClick={handleLoadExample}
                   className="text-sm text-leaf-600 hover:text-leaf-700 transition-colors"
+                  data-tour="example-file"
                 >
                   或者查看示例文件 →
                 </button>

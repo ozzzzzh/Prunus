@@ -78,11 +78,9 @@ export default function ChatInput() {
       genStore.setGeneratingNodeId(aiNodeId);
 
       await generateAIResponse(history, (chunk) => {
-        // 检测是否在 reasoning（有 reasoning_content 但 content 为空）
         const isReasoning = Boolean(chunk.reasoning && chunk.reasoning.length > 0 && !chunk.content);
         genStore.setIsReasoning(isReasoning);
         genStore.appendStreamingContent(chunk.content);
-        // 同时接收 reasoning 内容
         if (chunk.reasoning) {
           genStore.appendStreamingReasoning(chunk.reasoning);
         }

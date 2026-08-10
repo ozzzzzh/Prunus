@@ -78,11 +78,18 @@ export default function MessageNode({ data }: MessageNodeProps) {
     prevCollapsedRef.current = node.collapsed;
   }, [node.collapsed, node.marker]);
 
-  // 流式内容
-  const streamingContent = useGenerationStore((state) => state.streamingContent);
-  const streamingReasoning = useGenerationStore((state) => state.streamingReasoning);
-  const streamingNodeId = useGenerationStore((state) => state.generatingNodeId);
-  const isReasoning = useGenerationStore((state) => state.isReasoning);
+  // 流式内容 — 仅当前 streaming 节点订阅真实内容，其余节点返回空值避免无意义重渲染
+  const generatingNodeId = useGenerationStore((state) => state.generatingNodeId);
+  const isThisStreaming = generatingNodeId === node.id;
+  const streamingContent = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.streamingContent : ''
+  );
+  const streamingReasoning = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.streamingReasoning : ''
+  );
+  const isReasoning = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.isReasoning : false
+  );
 
   useEffect(() => {
     if (node.collapsed) return;
@@ -115,14 +122,14 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const isUser = role === 'user';
   const isSystem = role === 'system';
 
-  const isClickable = !isActive && !isUser;
+  const isClickable = !isActive;
   const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
 
   // 判断是否为根节点
   const isRootNode = !node.parentId;
 
   // 判断当前节点是否正在流式生成
-  const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
+  const isStreaming = isAIChat && role === 'assistant' && isThisStreaming;
 
   // Reasoning 相关状态和内容
   const [reasoningExpanded, setReasoningExpanded] = useState(true);

@@ -2,13 +2,13 @@
  * 交互式引导类型定义
  */
 
-export type TourPhase = 0 | 1 | 2 | 3 | 4;
+export type TourPhase = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type TourStepPlacement = 'top' | 'bottom' | 'left' | 'right';
 
 export interface TourStep {
   id: string;
-  phase: Exclude<TourPhase, 0>;
+  phase: TourPhase;
   target: string;           // CSS选择器或 data-tour 属性值
   title: string;
   description: string;
@@ -38,22 +38,53 @@ export interface TourStats {
 }
 
 /**
- * 引导步骤配置（11步）
+ * 引导步骤配置（13步）
  *
  * 流程说明：
- * - Phase 1: 认识画布（在Canvas页面）
- * - Phase 2: 发送第一条消息（合并输入+发送）
+ * - Phase 0: 认识文件管理（在 FileManager 页面）
+ * - Phase 1: 认识画布（在 Canvas 页面）
+ * - Phase 2: 发送第一条消息
  * - Phase 3: 节点导航
  * - Phase 4: 高级功能（展开编辑等）
  */
 export const TOUR_STEPS: TourStep[] = [
+  // ========== Phase 0: 认识文件管理 ==========
+  {
+    id: 'welcome-filemanager',
+    phase: 0,
+    target: '[data-tour="filemanager"]',
+    title: '欢迎使用 Prunus！',
+    description: 'Prunus 是一个树状对话管理器，用"树"的方式来组织你和 AI 的对话。你可以在这里创建文件夹和对话文件，就像整理电脑里的文档一样。',
+    placement: 'bottom',
+    requireConfirm: true,
+  },
+  {
+    id: 'open-session',
+    phase: 0,
+    target: '[data-tour="create-session-btn"]',
+    title: '创建或打开一个对话文件',
+    description: '点击这里新建一个对话文件，或者点击已有的文件来继续之前的对话。每个文件就是一棵独立的对话树。',
+    placement: 'right',
+    spotlight: true,
+    requireConfirm: true,
+  },
+
   // ========== Phase 1: 认识画布 ==========
   {
     id: 'welcome-canvas',
     phase: 1,
     target: '[data-tour="canvas"]',
-    title: '欢迎使用 Prunus！',
-    description: '这是一个树状对话管理器。画布上的每个方框是一个"节点"，代表一次对话。连线表示对话的分支关系。',
+    title: '这是你的对话画布',
+    description: '画布上的每个方框是一个"节点"，代表一次对话。连线表示对话的分支关系，像一棵树向上生长。',
+    placement: 'top',
+    requireConfirm: true,
+  },
+  {
+    id: 'canvas-pan',
+    phase: 1,
+    target: '[data-tour="canvas"]',
+    title: '画布操作',
+    description: '鼠标中键拖拽或鼠标滚轮可以平移画布，查看不同区域的节点。节点位置由画布自动布局，无需手动拖拽。',
     placement: 'top',
     requireConfirm: true,
   },
@@ -61,8 +92,8 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'observe-nodes',
     phase: 1,
     target: '[data-tour="root-node"]',
-    title: '这是根节点',
-    description: '根节点（🌱）是对话树的起点。点击任意节点可以切换到该对话分支，高亮的是当前激活的分支。',
+    title: '认识节点标记',
+    description: '对话树的节点有四种标记：\n🌱 种子 — 对话的起点\n🪵 树干 — 有多个分支方向的分叉点\n🍃 叶子 — 分支的末端，可以继续生长\n🍑 桃子 — 你手动标记的重要节点\n\n点击任意节点可以切换到该对话分支，绿色高亮的是当前激活的分支。',
     placement: 'right',
     spotlight: true,
     requireConfirm: true,
@@ -74,7 +105,7 @@ export const TOUR_STEPS: TourStep[] = [
     phase: 2,
     target: '[data-tour="chat-input"]',
     title: '发送你的第一条消息',
-    description: '在输入框中输入问题，然后按 Enter 或点击发送按钮。比如：',
+    description: '在输入框中输入问题，然后按 Enter 或点击发送按钮。试试看：',
     placement: 'top',
     spotlight: true,
     exampleInput: '山桃树适合什么土壤？',
@@ -103,7 +134,7 @@ export const TOUR_STEPS: TourStep[] = [
     phase: 3,
     target: '[data-tour="canvas"]',
     title: '键盘导航',
-    description: '使用方向键在节点间移动：↑父节点 ↓子节点 ←→兄弟节点。按 C 键可以展开/收缩节点。',
+    description: '使用方向键在节点间移动：↑ 父节点 ↓ 子节点 ← → 兄弟节点。按 C 键可以展开/收缩节点。',
     placement: 'top',
     requireConfirm: true,
   },
@@ -125,11 +156,10 @@ export const TOUR_STEPS: TourStep[] = [
     phase: 4,
     target: '[data-tour="chat-input"]',
     title: '在展开模式中对话',
-    description: '你可以在展开模式下继续对话，或者查看节点内容。完成后点击"下一步"继续。',
+    description: '在展开模式下，你可以沿着当前分支继续对话。试试发送一条消息，完成后系统会自动识别。',
     placement: 'top',
     spotlight: true,
     exampleInput: '还有其他注意事项吗？',
-    requireConfirm: true,
     allowSkip: true,
   },
   {
@@ -140,7 +170,6 @@ export const TOUR_STEPS: TourStep[] = [
     description: '点击返回按钮或按 ESC 退出展开模式，返回画布查看完整的对话树。',
     placement: 'left',
     spotlight: true,
-    requireConfirm: true,
     allowSkip: true,
   },
   {
@@ -178,7 +207,7 @@ export const TOUR_STEPS: TourStep[] = [
 /**
  * 获取指定阶段的步骤
  */
-export function getStepsByPhase(phase: Exclude<TourPhase, 0>): TourStep[] {
+export function getStepsByPhase(phase: TourPhase): TourStep[] {
   return TOUR_STEPS.filter(step => step.phase === phase);
 }
 

@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, Copy, Check } from 'lucide-react';
 import { useUIStore } from '../../../store/uiStore';
 import { useSessionStore } from '../../../store/sessionStore';
 import { useGenerationStore } from '../../../store/generationStore';
@@ -18,7 +18,9 @@ interface TourOverlayProps {
 export default function TourOverlay({ step }: TourOverlayProps) {
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const [isValidated, setIsValidated] = useState(false);
+  const [copied, setCopied] = useState(false);
   const initialCurrentNodeIdRef = useRef<string | null>(null);
+  const initialNodeCountRef = useRef(0);
 
   const tourState = useUIStore((s) => s.tourState);
   const advanceTourStep = useUIStore((s) => s.advanceTourStep);
@@ -34,11 +36,15 @@ export default function TourOverlay({ step }: TourOverlayProps) {
   const expandedViewStepsWithSpotlight = ['expanded-view-intro', 'expanded-view-input'];
   const shouldHideSpotlight = isExpanded && !expandedViewStepsWithSpotlight.includes(step.id);
 
-  // 获取目标元素位置
+  // 步骤切换时重置验证状态
   useEffect(() => {
     setIsValidated(false);
     initialCurrentNodeIdRef.current = null;
+    initialNodeCountRef.current = 0;
+  }, [step.id]);
 
+  // 获取目标元素位置
+  useEffect(() => {
     const updateTargetRect = () => {
       // 展开视图相关的步骤允许在展开模式下查找目标
       const expandedViewSteps = ['expanded-view-intro', 'expanded-view-input'];
@@ -87,13 +93,24 @@ export default function TourOverlay({ step }: TourOverlayProps) {
   useEffect(() => {
     if (isValidated) return;
 
-    // 初始化：记录当前节点ID（用于点击检测）- 在 subscribe 外部初始化
+    // 初始化：记录当前节点ID（用于点击检测）
     if (step.id === 'click-node' && initialCurrentNodeIdRef.current === null) {
       const activeSessionId = useSessionStore.getState().activeSessionId;
       if (activeSessionId) {
         const session = useSessionStore.getState().sessions[activeSessionId];
         if (session) {
           initialCurrentNodeIdRef.current = session.currentNodeId;
+        }
+      }
+    }
+
+    // 初始化：记录当前节点数（用于 expanded-view-input 检测新消息）
+    if (step.id === 'expanded-view-input' && initialNodeCountRef.current === 0) {
+      const activeSessionId = useSessionStore.getState().activeSessionId;
+      if (activeSessionId) {
+        const session = useSessionStore.getState().sessions[activeSessionId];
+        if (session) {
+          initialNodeCountRef.current = Object.keys(session.nodes).length;
         }
       }
     }
@@ -131,15 +148,24 @@ export default function TourOverlay({ step }: TourOverlayProps) {
           }
           break;
         }
+
+        case 'expanded-view-input': {
+          // 检测到新节点（用户发送了消息）
+          const currentCount = Object.keys(session.nodes).length;
+          if (initialNodeCountRef.current > 0 && currentCount > initialNodeCountRef.current) {
+            setIsValidated(true);
+            incrementTourStat('messagesCreated');
+          }
+          break;
+        }
       }
     });
 
-    // 订阅 uiStore - 检测编辑退出
+    // 订阅 uiStore - 检测 UI 状态变化
     const unsubscribeUI = useUIStore.subscribe((state, prevState) => {
-      // 展开模式输入 - 检测退出展开模式
-      if (step.id === 'expanded-view-input' && !state.expandedNodeId && prevState.expandedNodeId) {
+      // 展开模式返回 - 检测退出展开模式
+      if (step.id === 'expanded-view-intro' && !state.expandedNodeId && prevState.expandedNodeId) {
         setIsValidated(true);
-        incrementTourStat('messagesCreated');
       }
 
       // 编辑检测 - 检测退出编辑模式
@@ -298,11 +324,44 @@ export default function TourOverlay({ step }: TourOverlayProps) {
 
         <div className="p-5">
           <h3 className="text-lg font-bold text-gray-800 mb-2">{step.title}</h3>
-          <p className="text-sm text-gray-600 leading-relaxed mb-4">{step.description}</p>
+          <p className="text-sm text-gray-600 leading-relaxed mb-4 whitespace-pre-line">{step.description}</p>
 
           {step.exampleInput && (
             <div className="bg-gray-50 rounded-lg px-4 py-3 mb-4">
-              <p className="text-xs text-gray-500 mb-1">示例输入：</p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-gray-500">示例输入：</p>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(step.exampleInput!);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    } catch {
+                      // fallback for older browsers
+                      const textarea = document.createElement('textarea');
+                      textarea.value = step.exampleInput!;
+                      document.body.appendChild(textarea);
+                      textarea.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(textarea);
+                    }
+                  }}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-leaf-600 transition-colors"
+                  title="复制示例文字"
+                >
+                  {copied ? (
+                    <>
+                      <Check size={12} />
+                      <span>已复制</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={12} />
+                      <span>复制</span>
+                    </>
+                  )}
+                </button>
+              </div>
               <p className="text-sm text-leaf-700 font-medium">"{step.exampleInput}"</p>
             </div>
           )}

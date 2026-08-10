@@ -21,7 +21,6 @@ import TourCompletion from './TourCompletion';
 export default function InteractiveTour() {
   const tourState = useUIStore((s) => s.tourState);
   const startTour = useUIStore((s) => s.startTour);
-  const onboardingCompleted = useUIStore((s) => s.onboardingCompleted);
 
   const [isReady, setIsReady] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
@@ -37,33 +36,12 @@ export default function InteractiveTour() {
       return;
     }
 
-    // 检查当前页面 - 只有在 Canvas 页面才启动引导
-    const currentPage = useUIStore.getState().currentPage;
-    if (currentPage !== 'canvas') {
-      // 不在 Canvas 页面，等待
-      const unsubscribe = useUIStore.subscribe(
-        (state) => state.currentPage,
-        (newPage) => {
-          if (newPage === 'canvas' && !tourState.completedAt && !tourState.isActive) {
-            // 进入 Canvas 页面，启动引导
-            setTimeout(() => {
-              startTour();
-              setIsReady(true);
-            }, 1000);
-            unsubscribe();
-          }
-        }
-      );
-      return () => unsubscribe();
-    }
-
-    // 在 Canvas 页面
-    if (onboardingCompleted && !tourState.startedAt) {
-      // 延迟启动，让页面完全渲染
+    // 首次访问 — 无论当前在哪个页面，直接启动引导
+    if (!tourState.startedAt) {
       const timer = setTimeout(() => {
         startTour();
         setIsReady(true);
-      }, 1500);
+      }, 1000);
       return () => clearTimeout(timer);
     }
 
@@ -77,7 +55,7 @@ export default function InteractiveTour() {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [onboardingCompleted, tourState, startTour]);
+  }, [tourState, startTour]);
 
   // 引导完成时显示完成弹窗
   useEffect(() => {

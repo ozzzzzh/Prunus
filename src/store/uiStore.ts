@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { TourState, TourStats } from '../types/tour';
+import { TOUR_STEPS } from '../types/tour';
 
 // 页面类型
 export type PageType = 'canvas' | 'fileManager';
@@ -142,7 +143,7 @@ export const useUIStore = create<UIState>()(
         tourState: {
           ...state.tourState,
           isActive: true,
-          currentPhase: 1,
+          currentPhase: 0,
           currentStepIndex: 0,
           startedAt: new Date().toISOString(),
         }
@@ -151,7 +152,7 @@ export const useUIStore = create<UIState>()(
       advanceTourStep: () => set((state) => {
         const { tourState } = state;
         const currentStep = tourState.completedSteps.length;
-        const totalSteps = 10; // TOUR_STEPS.length
+        const totalSteps = TOUR_STEPS.length;
 
         if (currentStep >= totalSteps - 1) {
           // 完成引导
@@ -165,13 +166,14 @@ export const useUIStore = create<UIState>()(
           };
         }
 
-        // 进入下一步
-        const newPhase = Math.floor((currentStep + 1) / 3) + 1 as 1 | 2 | 3 | 4;
+        // 进入下一步，使用 TOUR_STEPS 中定义的实际 phase
+        const nextStep = TOUR_STEPS[currentStep + 1];
+        const newPhase = nextStep?.phase ?? tourState.currentPhase;
         return {
           tourState: {
             ...tourState,
             currentPhase: newPhase,
-            currentStepIndex: (currentStep + 1) % 3,
+            currentStepIndex: tourState.currentStepIndex + 1,
             completedSteps: [...tourState.completedSteps, `step-${currentStep}`],
           }
         };

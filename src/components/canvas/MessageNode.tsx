@@ -78,11 +78,18 @@ export default function MessageNode({ data }: MessageNodeProps) {
     prevCollapsedRef.current = node.collapsed;
   }, [node.collapsed, node.marker]);
 
-  // 流式内容
-  const streamingContent = useGenerationStore((state) => state.streamingContent);
-  const streamingReasoning = useGenerationStore((state) => state.streamingReasoning);
-  const streamingNodeId = useGenerationStore((state) => state.generatingNodeId);
-  const isReasoning = useGenerationStore((state) => state.isReasoning);
+  // 流式内容 — 仅当前 streaming 节点订阅真实内容，其余节点返回空值避免无意义重渲染
+  const generatingNodeId = useGenerationStore((state) => state.generatingNodeId);
+  const isThisStreaming = generatingNodeId === node.id;
+  const streamingContent = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.streamingContent : ''
+  );
+  const streamingReasoning = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.streamingReasoning : ''
+  );
+  const isReasoning = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.isReasoning : false
+  );
 
   useEffect(() => {
     if (node.collapsed) return;
@@ -115,11 +122,14 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const isUser = role === 'user';
   const isSystem = role === 'system';
 
-  const isClickable = !isActive && !isUser;
+  const isClickable = !isActive;
   const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
 
+  // 判断是否为根节点
+  const isRootNode = !node.parentId;
+
   // 判断当前节点是否正在流式生成
-  const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
+  const isStreaming = isAIChat && role === 'assistant' && isThisStreaming;
 
   // Reasoning 相关状态和内容
   const [reasoningExpanded, setReasoningExpanded] = useState(true);
@@ -511,6 +521,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
               : "border-gray-200 bg-white/80 opacity-60 shadow-sm z-0",
           !isEditing && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
         )}
+        data-tour={isActive ? "current-node" : isRootNode ? "root-node" : undefined}
       >
         {node.marker && (
           <div
@@ -566,6 +577,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
                 onClick={handleSplit}
                 title="Split into multiple branches"
                 className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex items-center gap-1"
+                data-tour="branch-out-btn"
               >
                 <SplitSquareHorizontal size={14} />
                 <span className="text-[10px] font-medium">Branch Out</span>
@@ -581,6 +593,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
                 }}
                 title="展开链路编辑"
                 className="p-1.5 text-gray-400 hover:text-leaf-600 hover:bg-leaf-50 rounded-md transition-colors"
+                data-tour="expand-btn"
               >
                 <Maximize2 size={14} />
               </button>

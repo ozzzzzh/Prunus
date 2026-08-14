@@ -129,7 +129,7 @@ export default function ExpandedView() {
   const isEditing = !!editingNodeId;
 
   return (
-    <div className="h-full w-full bg-[#fafafa] canvas-texture flex flex-col">
+    <div className="h-full w-full bg-[#fafafa] canvas-texture flex flex-col" data-tour="expanded-view">
       {/* 顶部工具栏 */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -149,6 +149,7 @@ export default function ExpandedView() {
             onClick={exitExpandedView}
             className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors flex items-center gap-1"
             title="返回画布 (ESC)"
+            data-tour="exit-expanded-btn"
           >
             <Minimize2 size={16} />
             <span className="text-xs">返回画布</span>

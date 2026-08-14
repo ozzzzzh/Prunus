@@ -274,7 +274,7 @@ export default function ChatCanvas() {
   }
 
   return (
-    <div className="flex-1 h-full relative bg-[#fafafa] overflow-hidden canvas-texture">
+    <div className="flex-1 h-full relative bg-[#fafafa] overflow-hidden canvas-texture" data-tour="canvas">
       <ReactFlow
         nodes={nodes}
         edges={edges}

@@ -610,3 +610,54 @@ Store 变化 → `enableAutoSave` 的订阅 → `debouncedSave`（500ms）→ `s
 7. **迁移标记未使用**：`persistenceService.ts` 中 `MIGRATION_KEY` 常量已定义但未写入 localStorage，迁移是否重复执行缺少持久化开关。
 8. **IndexedDB `nodes` 表**：已建表但当前未使用（节点内嵌在 session 中），`utils/indexedDB.ts` 的 `queryByIndex` 仅在 folder 按 parentId 查询时使用。
 9. **类型系统预留**：`types/node.ts` 定义了九种节点类型，但运行时仅使用 `ai-chat`，其余为未来扩展预留。
+
+---
+
+## 17. 增量变更（v0.21.0 之后）
+
+> 本节记录 v0.21.0 快照之后新增/修改的内容，使本文档对齐当前代码状态。决策理由见 `DECISIONS.md`。
+
+### 17.1 新增状态与数据模型
+
+- `uiStore` 新增：`isSelectingMode`、`selectedNodeIds`（按点击顺序）、`enterSelectingMode` / `exitSelectingMode` / `toggleNodeSelection`（均为内存态，不进 `partialize`）。
+- `sessionStore` 的 `ChatSession` 新增可选字段 `globalPrompt?: string`，以及 `setGlobalPrompt(sessionId, prompt)`。
+- 新增 `store/dialogStore.ts`：全局对话框 store，`DialogConfig` 为判别联合类型（confirm / prompt）。
+
+### 17.2 新增文件
+
+| 文件 | 作用 |
+|------|------|
+| `utils/summarize.ts` | 节点总结服务 `summarizeNodes(nodes, customInstruction?)` |
+| `utils/contentSplit.ts` | 本地结构化拆分 `splitContentLocally(content)`（标题/编号列表） |
+| `store/dialogStore.ts` | 全局对话框状态（`showConfirm`/`showPrompt`/`showToast`） |
+| `components/summary/SummaryModal.tsx` | 知识总结弹窗（生成前可填自定义要求 + 一键复制） |
+| `components/layout/GlobalPromptModal.tsx` | 会话背景弹窗（textarea 草稿 + 清空/取消/保存） |
+| `components/layout/DialogHost.tsx` | 对话框宿主，内部含 ConfirmDialog / PromptDialog / ToastMessage |
+
+### 17.3 关键修改
+
+- `ChatCanvas.tsx`：右上角按钮组（"会话背景" + "节点总结"）、选择模式工具栏（取消 / 生成总结(N)）、挂载 `SummaryModal` 与 `GlobalPromptModal`。
+- `MessageNode.tsx`：选择模式交互与视觉（选中描边 + 对勾徽标 + 根节点不可选）、Branch Out 本地优先 + LLM 兜底、右键"摘取"菜单。
+- `ChatInput.tsx`：构建 system 提示词时追加 `currentSession.globalPrompt`。
+- `App.tsx`：fileManager 与 canvas 两个分支均挂载 `<DialogHost />`。
+- `llmApi.ts`：`generateAIResponse` 的 `options` 新增 `temperature`。
+- `aiParser.ts`：兜底调用改为 `temperature: 0` + `enableThinking: false`。
+- 全部浏览器原生 `alert` / `confirm` / `prompt`（10 处）替换为对话框系统（涉及 Sidebar / FileManagerPage / TourOverlay / TourCompletion / MessageNode）。
+
+### 17.4 新功能流程
+
+- **节点总结**：右上角"节点总结"→ 选择模式点击多选 → "生成总结(N)" → `SummaryModal` → `summarizeNodes` 一次 LLM 调用 → 弹窗展示 + 复制。
+- **会话背景**：右上角"会话背景"→ `GlobalPromptModal` 填写 → `setGlobalPrompt` → 后续每次 `ChatInput` 生成时追加到 system 提示词。
+- **对话框系统**：任意组件 `useDialogStore.getState().showConfirm / showPrompt / showToast(...)` → `DialogHost` 统一渲染。
+- **Branch Out（优化后）**：`splitContentLocally` 命中则本地秒切；未命中回退 `smartParseBranchesFromContent`（temp 0 + 关思考），随后 `splitNodeIntoBranches` 原子创建节点。
+
+### 17.5 已解决的技术债
+
+- 修复全部 23 个既有 TypeScript 错误：未使用变量/导入（`App.tsx`/`ExpandedView`/`Sidebar`/`InteractiveTour`/`TourCompletion`/`TourOverlay`/`useTourStepValidator`/`persistenceService`/`migration.ts`）、`PrunusNode` 上访问 `role`（改用 `isAIChatNode` 守卫）、`llmApi` 流式类型、`sessionStore` 的 `exampleData` 索引类型、`FileManagerPage` 的 TS7022。
+- 删除 `persistenceService.ts` 中未使用的死代码：`MIGRATION_KEY` / `generateId` / `needsMigration` / `migrateSessionsToFolderItems` / `cleanDuplicateFolderItems` 及 `FolderItem` 导入（§16 第 7 项已闭环）。
+
+### 17.6 当前环境配置
+
+- 模型：`deepseek-v4-flash`；Base URL：`https://api.deepseek.com`；`ENABLE_THINKING=false`。
+- 实际配置在 `.env.local`（gitignored，含 API Key）；`.env.example` 为模板。
+- 开发启动：PM2 `npm run dev`（`ecosystem.config.cjs`，`watch: false`，改代码后需 `./restart.sh` 或手动重启）。

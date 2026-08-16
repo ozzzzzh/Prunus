@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useUIStore } from '../store/uiStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useGenerationStore } from '../store/generationStore';
+import { isAIChatNode } from '../types';
 
 interface ValidationState {
   isValidated: boolean;
@@ -81,7 +82,7 @@ export function useTourStepValidator(stepId: string): ValidationState {
         if (!generatingNodeId && prevRef.current.nodeCount > 0) {
           // 需要先检测到有生成中的节点，然后再检测完成
           const hasUserMessage = session && Object.values(session.nodes).some(
-            n => n.role === 'user' && n.childrenIds.length > 0
+            n => isAIChatNode(n) && n.role === 'user' && n.childrenIds.length > 0
           );
           if (hasUserMessage) {
             setIsValidated(true);
@@ -153,10 +154,7 @@ export function useInitTourValidationState() {
 
   useEffect(() => {
     if (activeSessionId && sessions[activeSessionId]) {
-      const session = sessions[activeSessionId];
-      // 记录初始节点数
-      const nodeCount = Object.keys(session.nodes).length;
-      // 可以存储到某个地方用于后续验证
+      // 预留：后续可在引导开始时记录初始节点数
     }
   }, [activeSessionId, sessions]);
 }

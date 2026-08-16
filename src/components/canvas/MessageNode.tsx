@@ -1,5 +1,5 @@
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2 } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -9,8 +9,10 @@ import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { useUIStore } from '../../store/uiStore';
+import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
+import { splitContentLocally } from '../../utils/contentSplit';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { markdownToHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
@@ -48,6 +50,9 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const editingNodeId = useUIStore((state) => state.editingNodeId);
   const setEditingNode = useUIStore((state) => state.setEditingNode);
   const setExpandedNode = useUIStore((state) => state.setExpandedNode);
+  const isSelectingMode = useUIStore((state) => state.isSelectingMode);
+  const isSelected = useUIStore((state) => state.selectedNodeIds.includes(node.id));
+  const toggleNodeSelection = useUIStore((state) => state.toggleNodeSelection);
   const [isSplitting, setIsSplitting] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -167,15 +172,28 @@ export default function MessageNode({ data }: MessageNodeProps) {
     e.stopPropagation();
     setIsSplitting(true);
     try {
-      const { outline, branches } = await smartParseBranchesFromContent(node.content);
+      // 先尝试本地结构化拆分（毫秒级），失败再回退 LLM
+      let outline: string;
+      let branches: string[];
+
+      const local = splitContentLocally(node.content);
+      if (local) {
+        outline = local.outline;
+        branches = local.branches;
+      } else {
+        const result = await smartParseBranchesFromContent(node.content);
+        outline = result.outline;
+        branches = result.branches;
+      }
+
       if (branches.length > 0) {
         splitNodeIntoBranches(node.id, outline, branches);
       } else {
-        alert("The AI couldn't find a clear way to split this message into multiple distinct branches.");
+        useDialogStore.getState().showToast('AI 未能将这条消息拆分为多个独立分支。', { type: 'info' });
       }
     } catch (error) {
       console.error("Failed to split:", error);
-      alert("Failed to split the message. Please check your API connection.");
+      useDialogStore.getState().showToast('拆分失败，请检查 API 连接。', { type: 'error' });
     } finally {
       setIsSplitting(false);
     }
@@ -188,12 +206,20 @@ export default function MessageNode({ data }: MessageNodeProps) {
 
   const handleCollapseClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isSelectingMode) {
+      if (!isRootNode) {
+        toggleNodeSelection(node.id);
+      }
+      return;
+    }
     toggleNodeCollapse(node.id);
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+
+    if (isSelectingMode) return;
 
     // 编辑模式下的特殊处理
     if (isEditing) {
@@ -351,6 +377,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    if (isSelectingMode) return;
     if (!isStreaming) {
       // 重置所有标记
       isSavingRef.current = false;
@@ -452,11 +479,14 @@ export default function MessageNode({ data }: MessageNodeProps) {
             onMouseLeave={() => setShowTooltip(false)}
             className={cn(
               "w-14 h-14 rounded-full bg-white shadow-lg border-2 flex items-center justify-center cursor-pointer transition-transform duration-200",
-              isActive
-                ? "scale-110 border-leaf-400 shadow-xl"
-                : "border-gray-200 hover:scale-110 hover:border-leaf-300"
+              isSelectingMode && isSelected
+                ? "scale-110 border-leaf-500 ring-4 ring-leaf-200 shadow-xl"
+                : isActive
+                  ? "scale-110 border-leaf-400 shadow-xl"
+                  : "border-gray-200 hover:scale-110 hover:border-leaf-300",
+              isSelectingMode && !isSelected && isRootNode && "opacity-40"
             )}
-            title="Click to expand"
+            title={isSelectingMode ? "点击选中" : "Click to expand"}
           >
             <span className="text-2xl">{node.marker}</span>
           </div>
@@ -501,6 +531,13 @@ export default function MessageNode({ data }: MessageNodeProps) {
     <>
       <div
         onClick={(e) => {
+          if (isSelectingMode) {
+            e.stopPropagation();
+            if (!isRootNode) {
+              toggleNodeSelection(node.id);
+            }
+            return;
+          }
           if (isEditing) {
             e.stopPropagation();
             return;
@@ -519,7 +556,10 @@ export default function MessageNode({ data }: MessageNodeProps) {
             : isActive
               ? "border-leaf-400 bg-white shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)] z-20"
               : "border-gray-200 bg-white/80 opacity-60 shadow-sm z-0",
-          !isEditing && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
+          isSelectingMode && !isEditing && isSelected && "border-leaf-500 ring-2 ring-leaf-300 bg-white opacity-100 z-20 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)]",
+          isSelectingMode && !isEditing && !isSelected && !isRootNode && "bg-white opacity-100 hover:border-leaf-300 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)]",
+          isSelectingMode && !isEditing && !isSelected && isRootNode && "opacity-40",
+          !isEditing && !isSelectingMode && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
         )}
         data-tour={isActive ? "current-node" : isRootNode ? "root-node" : undefined}
       >
@@ -530,6 +570,12 @@ export default function MessageNode({ data }: MessageNodeProps) {
             title="Click to collapse"
           >
             {node.marker}
+          </div>
+        )}
+
+        {isSelectingMode && isSelected && (
+          <div className="absolute -top-3 -left-3 w-8 h-8 rounded-full bg-leaf-600 text-white flex items-center justify-center z-10 shadow-md">
+            <Check size={16} />
           </div>
         )}
 
@@ -568,11 +614,11 @@ export default function MessageNode({ data }: MessageNodeProps) {
             {isSplitting && (
               <div className="flex items-center gap-1 text-gray-600 bg-gray-100 px-2 py-0.5 rounded-md">
                 <Loader2 size={12} className="animate-spin" />
-                <span className="text-[10px] font-medium">Splitting...</span>
+                <span className="text-[10px] font-medium">分析中…</span>
               </div>
             )}
 
-            {canSplit && isActive && !isSplitting && (
+            {canSplit && isActive && !isSplitting && !isSelectingMode && (
               <button
                 onClick={handleSplit}
                 title="Split into multiple branches"
@@ -585,7 +631,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
             )}
 
             {/* 展开按钮：仅叶子节点显示 */}
-            {isActive && node.childrenIds.length === 0 && (
+            {isActive && node.childrenIds.length === 0 && !isSelectingMode && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -599,7 +645,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {isActive && !isUser && (
+            {isActive && !isUser && !isSelectingMode && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();

@@ -60,9 +60,11 @@ export default function ChatInput() {
         currId = node.parentId;
       }
 
+      const baseSystemPrompt = 'You are a helpful AI assistant. Provide structured, clear, and concise answers.';
+      const globalPrompt = currentSession.globalPrompt?.trim();
       history.unshift({
         role: 'system',
-        content: 'You are a helpful AI assistant. Provide structured, clear, and concise answers.'
+        content: globalPrompt ? `${baseSystemPrompt}\n\n${globalPrompt}` : baseSystemPrompt,
       });
 
       // 先创建空的 assistant 节点

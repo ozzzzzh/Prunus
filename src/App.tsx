@@ -8,6 +8,7 @@ import {
 import ChatCanvas from './components/canvas/ChatCanvas';
 import ChatInput from './components/chat/ChatInput';
 import SettingsModal from './components/layout/SettingsModal';
+import DialogHost from './components/layout/DialogHost';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
 import { HelpPanel, InteractiveTour } from './components/onboarding';
@@ -77,7 +78,7 @@ function App() {
   const sessionTitle = activeSession?.title || '未命名会话';
 
   // 点击面包屑导航到文件夹
-  const handleBreadcrumbClick = (folderId: string | null) => {
+  const handleBreadcrumbClick = (_folderId: string | null) => {
     setCurrentPage('fileManager');
   };
 
@@ -91,7 +92,12 @@ function App() {
         </div>
       );
     }
-    return <FileManagerPage />;
+    return (
+      <>
+        <FileManagerPage />
+        <DialogHost />
+      </>
+    );
   }
 
   return (
@@ -168,6 +174,9 @@ function App() {
 
       {/* 交互式引导 */}
       <InteractiveTour />
+
+      {/* 全局对话框（确认/输入弹窗 + Toast） */}
+      <DialogHost />
     </div>
   );
 }

@@ -6,8 +6,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import { useUIStore } from '../../../store/uiStore';
 import { useSessionStore } from '../../../store/sessionStore';
-import { useGenerationStore } from '../../../store/generationStore';
+import { useDialogStore } from '../../../store/dialogStore';
 import { cn } from '../../../utils/cn';
+import { isAIChatNode } from '../../../types';
 import type { TourStep } from '../../../types/tour';
 import { TOUR_STEPS } from '../../../types/tour';
 
@@ -126,7 +127,7 @@ export default function TourOverlay({ step }: TourOverlayProps) {
       switch (step.id) {
         case 'input-and-send': {
           const currentNode = session.currentNodeId ? session.nodes[session.currentNodeId] : null;
-          if (currentNode && currentNode.role === 'user' && currentNode.content) {
+          if (currentNode && isAIChatNode(currentNode) && currentNode.role === 'user' && currentNode.content) {
             setIsValidated(true);
             incrementTourStat('messagesCreated');
           }
@@ -216,9 +217,11 @@ export default function TourOverlay({ step }: TourOverlayProps) {
   }, [skipTourStep, advanceTourStep]);
 
   const handleSkipTour = useCallback(() => {
-    if (confirm('确定要跳过引导吗？')) {
-      skipTour();
-    }
+    useDialogStore.getState().showConfirm({
+      title: '跳过引导',
+      message: '确定要跳过引导吗？',
+      onConfirm: () => skipTour(),
+    });
   }, [skipTour]);
 
   const getCardPosition = useCallback(() => {

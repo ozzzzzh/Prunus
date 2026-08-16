@@ -5,7 +5,7 @@
  * 保持向后兼容性
  */
 
-import type { PrunusNode, AIChatNode, NodeType, NodeMarker } from '../types/node';
+import type { PrunusNode, AIChatNode, NodeMarker } from '../types/node';
 import type { Session } from '../types/session';
 
 /**
@@ -171,7 +171,7 @@ export function createRootNode(id: string): AIChatNode {
     id,
     parentId: null,
     role: 'system',
-    content: 'Hello, Prunus is ready. The tree begins here.',
+    content: 'Hello, Prunus is ready. Your thought begins here.',
     marker: '🌱',
   });
 }

@@ -1,16 +1,21 @@
 /**
  * API 配置状态管理
  *
- * 注意：API Key 和 Base URL 现在通过 .env.local 文件配置
- * 此 store 仅保留模型选择等前端可配置项
+ * BYOK 优先：用户可自填 Base URL + API Key + 模型（本地持久化）。
+ * 留空时回退到服务器 .env.local 的代理配置（共享 Key）。
  */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type LLMProtocol = 'openai' | 'anthropic';
+
 export interface APIConfig {
   model: string;
   enableThinking: boolean;  // 深度思考开关
+  baseUrl: string;  // BYOK：LLM Base URL（留空走服务器代理）
+  apiKey: string;   // BYOK：LLM API Key（留空走服务器代理）
+  protocol: LLMProtocol;  // 协议类型（OpenAI /chat/completions 或 Anthropic /v1/messages）
 }
 
 interface APIConfigState {
@@ -30,6 +35,9 @@ const DEFAULT_ENABLE_THINKING = (import.meta as any).env?.VITE_ENABLE_THINKING =
 const DEFAULT_CONFIG: APIConfig = {
   model: DEFAULT_MODEL,
   enableThinking: DEFAULT_ENABLE_THINKING,
+  baseUrl: '',
+  apiKey: '',
+  protocol: 'openai',
 };
 
 export const useAPIConfigStore = create<APIConfigState>()(
@@ -38,6 +46,9 @@ export const useAPIConfigStore = create<APIConfigState>()(
       config: {
         model: DEFAULT_MODEL,
         enableThinking: DEFAULT_ENABLE_THINKING,
+        baseUrl: '',
+        apiKey: '',
+        protocol: 'openai',
       },
 
       updateConfig: (newConfig) => {

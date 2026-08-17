@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { useAPIConfigStore } from '../store/apiConfigStore';
 
 // 检测是否是 Safari 浏览器
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -6,23 +7,47 @@ const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 // 从环境变量获取默认模型（通过 Vite define 暴露）
 const DEFAULT_MODEL = (import.meta as any).env?.VITE_LLM_MODEL || 'gpt-3.5-turbo';
 
-export async function generateAIResponse(
-  messages: { role: 'user' | 'assistant' | 'system', content: string }[],
-  onChunk?: (data: { content: string; reasoning?: string }) => void,
-  options?: {
-    enableThinking?: boolean;  // 是否开启深度思考
-    temperature?: number;      // 采样温度
-  }
-): Promise<{ content: string; reasoning: string }> {
-  // 使用本地代理路径，API Key 由代理从环境变量添加
-  // 需要构造完整 URL（OpenAI SDK 要求完整 URL）
-  const baseURL = `${window.location.origin}/api/llm`;
-  const model = DEFAULT_MODEL;
+// Anthropic 协议版本
+const ANTHROPIC_VERSION = '2023-06-01';
 
-  // 创建 OpenAI 客户端，使用代理路径
-  // 注意：不需要传递真实 apiKey，因为代理会自动添加 Authorization header
+type LLMMessage = { role: 'user' | 'assistant' | 'system'; content: string };
+
+type GenerateOptions = {
+  enableThinking?: boolean;  // 是否开启深度思考
+  temperature?: number;      // 采样温度
+};
+
+export async function generateAIResponse(
+  messages: LLMMessage[],
+  onChunk?: (data: { content: string; reasoning?: string }) => void,
+  options?: GenerateOptions
+): Promise<{ content: string; reasoning: string }> {
+  // BYOK 优先：用户填了 baseUrl + apiKey 则直连其 provider；
+  // 否则走本地代理 /api/llm，API Key 由代理从环境变量（.env.local）注入。
+  const config = useAPIConfigStore.getState().config;
+  const byokBaseUrl = config.baseUrl?.trim() ?? '';
+  const byokApiKey = config.apiKey?.trim() ?? '';
+  const hasBYOK = Boolean(byokBaseUrl && byokApiKey);
+  const model = config.model?.trim() || DEFAULT_MODEL;
+
+  // Anthropic 协议：原生 fetch 走 /v1/messages（需 BYOK，服务器代理仅支持 OpenAI 协议）
+  if (config.protocol === 'anthropic') {
+    if (!hasBYOK) {
+      throw new Error('Anthropic 协议需要填写 Base URL 和 API Key（服务器默认配置仅支持 OpenAI 协议）。');
+    }
+    return generateAnthropicResponse(messages, onChunk, options, {
+      baseUrl: byokBaseUrl,
+      apiKey: byokApiKey,
+      model,
+    });
+  }
+
+  // OpenAI 协议：使用 OpenAI SDK
+  const baseURL = hasBYOK ? byokBaseUrl : `${window.location.origin}/api/llm`;
+
+  // BYOK 模式使用用户自己的 Key；代理模式下用占位符，实际 Key 由代理注入。
   const client = new OpenAI({
-    apiKey: 'proxy-placeholder',  // 占位符，实际的 Key 由代理添加
+    apiKey: hasBYOK ? byokApiKey : 'proxy-placeholder',
     baseURL: baseURL,
     dangerouslyAllowBrowser: true,
     // 增加超时设置，防止请求一直挂起
@@ -101,3 +126,136 @@ export async function generateAIResponse(
   }
 }
 
+/**
+ * Anthropic 协议（POST /v1/messages）调用，使用原生 fetch + SSE 流式解析。
+ * 不引入 @anthropic-ai/sdk，以兼容各类 Anthropic 协议端点（GLM/Kimi/Qwen 等）。
+ */
+async function generateAnthropicResponse(
+  messages: LLMMessage[],
+  onChunk: ((data: { content: string; reasoning?: string }) => void) | undefined,
+  options: GenerateOptions | undefined,
+  config: { baseUrl: string; apiKey: string; model: string }
+): Promise<{ content: string; reasoning: string }> {
+  // 消息转换：OpenAI 的 system role → Anthropic 顶层 system 字段
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => m.content)
+    .join('\n\n');
+  const anthropicMessages = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+  const body: Record<string, unknown> = {
+    model: config.model,
+    messages: anthropicMessages,
+    max_tokens: 8192,
+    stream: true,
+    temperature: options?.temperature ?? 0.7,
+  };
+  if (system) body.system = system;
+  // thinking：Anthropic 协议下仅显式开启才发送（保守处理，避免部分端点不支持）
+  if (options?.enableThinking) {
+    body.thinking = { type: 'enabled', budget_tokens: 4096 };
+  }
+
+  const baseUrl = config.baseUrl.replace(/\/+$/, '');
+  const url = `${baseUrl}/v1/messages`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': config.apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if ((error as Error).name === 'AbortError') {
+      throw new Error('Connection Error: 请求超时，请检查 Base URL 或网络连接。');
+    }
+    throw new Error('Connection Error: 无法连接到大模型服务，请检查 Base URL 是否正确（可能不支持浏览器跨域）。');
+  }
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    let errMsg = `Anthropic API error (${response.status})`;
+    try {
+      const errText = await response.text();
+      const errJson = JSON.parse(errText);
+      errMsg = errJson.error?.message || errMsg;
+    } catch {
+      // 忽略非 JSON 错误体
+    }
+    throw new Error(errMsg);
+  }
+
+  if (!response.body) {
+    throw new Error('Anthropic API error: 空响应。');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let reasoning = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+    let boundary: number;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const delta = parseAnthropicEvent(rawEvent);
+      if (!delta) continue;
+      if (delta.type === 'text') {
+        content += delta.value;
+        onChunk?.({ content: delta.value, reasoning: '' });
+      } else if (delta.type === 'thinking') {
+        reasoning += delta.value;
+        onChunk?.({ content: '', reasoning: delta.value });
+      }
+    }
+  }
+
+  return { content, reasoning };
+}
+
+/**
+ * 解析单个 Anthropic SSE 事件，返回文本/思考增量。
+ */
+function parseAnthropicEvent(rawEvent: string): { type: 'text' | 'thinking'; value: string } | null {
+  for (const line of rawEvent.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const json = line.slice(5).trim();
+    if (!json) continue;
+
+    let data: any;
+    try {
+      data = JSON.parse(json);
+    } catch {
+      continue; // 忽略非 JSON 行
+    }
+
+    if (data?.type === 'content_block_delta' && data.delta) {
+      if (data.delta.type === 'text_delta' && typeof data.delta.text === 'string') {
+        return { type: 'text', value: data.delta.text };
+      }
+      if (data.delta.type === 'thinking_delta' && typeof data.delta.thinking === 'string') {
+        return { type: 'thinking', value: data.delta.thinking };
+      }
+    }
+  }
+  return null;
+}

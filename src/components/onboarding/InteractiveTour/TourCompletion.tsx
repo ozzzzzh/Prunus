@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { X, PartyPopper, ArrowRight, RotateCcw } from 'lucide-react';
 import { useUIStore } from '../../../store/uiStore';
-import { cn } from '../../../utils/cn';
+import { useDialogStore } from '../../../store/dialogStore';
 
 interface TourCompletionProps {
   onClose: () => void;
@@ -28,14 +28,18 @@ export default function TourCompletion({ onClose }: TourCompletionProps) {
 
   // 重新开始引导
   const handleRestart = () => {
-    if (confirm('确定要重新开始引导吗？')) {
-      resetTour();
-      onClose();
-      // 延迟启动，让用户看到重置效果
-      setTimeout(() => {
-        useUIStore.getState().startTour();
-      }, 500);
-    }
+    useDialogStore.getState().showConfirm({
+      title: '重新开始引导',
+      message: '确定要重新开始引导吗？',
+      onConfirm: () => {
+        resetTour();
+        onClose();
+        // 延迟启动，让用户看到重置效果
+        setTimeout(() => {
+          useUIStore.getState().startTour();
+        }, 500);
+      },
+    });
   };
 
   return (

@@ -19,7 +19,7 @@ import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { cn } from '../../utils/cn';
-import FormatToolbar, { FormatSubMenu } from '../chat/FormatToolbar';
+import { FormatSubMenu } from '../chat/FormatToolbar';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
 
 const preprocessMarkdown = (text: string): string => {
@@ -43,7 +43,7 @@ export default function ExpandedView() {
 
   // 编辑模式状态
   const [activeSubMenu, setActiveSubMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
-  const [autoOpenMenu, setAutoOpenMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
+  const [, setAutoOpenMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
 
   // 收集单链路节点（从根到当前叶子节点）
   const chainNodes = useMemo(() => {

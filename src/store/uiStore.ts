@@ -59,6 +59,18 @@ interface UIState {
   setExpandedNode: (nodeId: string | null) => void;
   exitExpandedView: () => void;
 
+  // ===== 节点多选总结 =====
+
+  // 是否处于节点选择模式
+  isSelectingMode: boolean;
+
+  // 已选中的节点 ID（按点击顺序）
+  selectedNodeIds: string[];
+
+  enterSelectingMode: () => void;
+  exitSelectingMode: () => void;
+  toggleNodeSelection: (nodeId: string) => void;
+
   // ===== 交互式引导 =====
 
   // 引导状态
@@ -126,6 +138,22 @@ export const useUIStore = create<UIState>()(
       expandedNodeId: null,
       setExpandedNode: (nodeId) => set({ expandedNodeId: nodeId }),
       exitExpandedView: () => set({ expandedNodeId: null }),
+
+      // ===== 节点多选总结 =====
+
+      isSelectingMode: false,
+      selectedNodeIds: [],
+
+      enterSelectingMode: () => set({ isSelectingMode: true, selectedNodeIds: [] }),
+      exitSelectingMode: () => set({ isSelectingMode: false, selectedNodeIds: [] }),
+      toggleNodeSelection: (nodeId) => set((state) => {
+        const exists = state.selectedNodeIds.includes(nodeId);
+        return {
+          selectedNodeIds: exists
+            ? state.selectedNodeIds.filter((id) => id !== nodeId)
+            : [...state.selectedNodeIds, nodeId],
+        };
+      }),
 
       // ===== 交互式引导 =====
 

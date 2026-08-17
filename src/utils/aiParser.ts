@@ -28,10 +28,14 @@ ${content}
 `;
 
   try {
-    const response = await generateAIResponse([
-      { role: 'system', content: 'You are a helpful JSON parser.' },
-      { role: 'user', content: prompt }
-    ]);
+    const response = await generateAIResponse(
+      [
+        { role: 'system', content: 'You are a helpful JSON parser.' },
+        { role: 'user', content: prompt },
+      ],
+      undefined,
+      { temperature: 0, enableThinking: false }
+    );
     // aiParser 只需要 content，不需要 reasoning
     const responseText = response.content;
 

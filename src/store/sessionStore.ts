@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import type { PrunusNode, AIChatNode, NodeMarker } from '../types';
-import { createAIChatNode, createRootNode, migrateNode, type LegacyNode } from '../utils/migration';
+import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
 
 // ===== 类型定义 =====
 
@@ -19,6 +19,7 @@ export interface ChatSession {
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
+  globalPrompt?: string;
 }
 
 interface SessionState {
@@ -31,6 +32,7 @@ interface SessionState {
   deleteSession: (sessionId: string) => void;
   renameSession: (sessionId: string, newTitle: string) => void;
   togglePinSession: (sessionId: string) => void;
+  setGlobalPrompt: (sessionId: string, prompt: string) => void;
 
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
@@ -162,6 +164,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           [sessionId]: {
             ...session,
             pinned: !session.pinned,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  setGlobalPrompt: (sessionId, prompt) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            globalPrompt: prompt,
             updatedAt: Date.now(),
           },
         },
@@ -581,8 +601,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!exampleData.sessions) return null;
 
     const migratedNodes: Record<string, PrunusNode> = {};
-    const exampleSessionId = Object.keys(exampleData.sessions)[0];
-    const legacySession = exampleData.sessions[exampleSessionId];
+    const sessions = exampleData.sessions as Record<string, LegacySession>;
+    const exampleSessionId = Object.keys(sessions)[0];
+    const legacySession = sessions[exampleSessionId];
 
     if (!legacySession) return null;
 

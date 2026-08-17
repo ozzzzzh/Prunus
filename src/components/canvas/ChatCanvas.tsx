@@ -1,11 +1,17 @@
-import { useMemo, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
 import { ReactFlow, Background, Controls, type Node, type Edge, useNodesState, useEdgesState, ConnectionMode, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Focus } from 'lucide-react';
+import { Focus, Sparkles, X, BookOpen } from 'lucide-react';
 
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
+import { useUIStore } from '../../store/uiStore';
+import { isAIChatNode } from '../../types';
+import type { SummaryNodeInput } from '../../utils/summarize';
+import { cn } from '../../utils/cn';
 import MessageNode from './MessageNode';
+import SummaryModal from '../summary/SummaryModal';
+import GlobalPromptModal from '../layout/GlobalPromptModal';
 import { getLayoutedElements } from '../../utils/layout';
 
 const nodeTypes = {
@@ -20,7 +26,16 @@ export default function ChatCanvas() {
   const toggleNodeCollapse = useSessionStore(state => state.toggleNodeCollapse);
   const deleteNode = useSessionStore(state => state.deleteNode);
 
+  const isSelectingMode = useUIStore(state => state.isSelectingMode);
+  const selectedNodeIds = useUIStore(state => state.selectedNodeIds);
+  const enterSelectingMode = useUIStore(state => state.enterSelectingMode);
+  const exitSelectingMode = useUIStore(state => state.exitSelectingMode);
+
   const session = activeSessionId ? sessions[activeSessionId] : null;
+
+  const [summaryNodes, setSummaryNodes] = useState<SummaryNodeInput[] | null>(null);
+  const [showGlobalPrompt, setShowGlobalPrompt] = useState(false);
+  const hasGlobalPrompt = Boolean(session?.globalPrompt?.trim());
 
   // React Flow instance for programmatic view control
   const { setCenter } = useReactFlow();
@@ -139,6 +154,23 @@ export default function ChatCanvas() {
     }
   };
 
+  const handleGenerateSummary = () => {
+    if (!session || selectedNodeIds.length === 0) return;
+
+    const nodesToSummarize: SummaryNodeInput[] = [];
+    for (const id of selectedNodeIds) {
+      const node = session.nodes[id];
+      if (!node) continue;
+      nodesToSummarize.push({
+        role: isAIChatNode(node) ? node.role : 'assistant',
+        content: node.content,
+      });
+    }
+
+    setSummaryNodes(nodesToSummarize);
+    exitSelectingMode();
+  };
+
   // 键盘导航
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // 如果用户正在输入，不触发导航
@@ -154,6 +186,14 @@ export default function ChatCanvas() {
 
     // 如果按下了 Ctrl 或 Cmd 键，不触发单键快捷键（避免与复制等操作冲突）
     if (e.ctrlKey || e.metaKey) {
+      return;
+    }
+
+    // 选择模式下仅响应 ESC 退出
+    if (isSelectingMode) {
+      if (e.key === 'Escape') {
+        exitSelectingMode();
+      }
       return;
     }
 
@@ -229,7 +269,7 @@ export default function ChatCanvas() {
     if (targetNodeId && session.nodes[targetNodeId]) {
       focusNode(targetNodeId);
     }
-  }, [session, focusNode, toggleNodeCollapse, deleteNode]);
+  }, [session, focusNode, toggleNodeCollapse, deleteNode, isSelectingMode, exitSelectingMode]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -282,6 +322,7 @@ export default function ChatCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={(_, node) => {
+          if (isSelectingMode) return;
           // 只允许点击非高亮的 AI/System 节点
           const nodeData = node.data as { isActive?: boolean; node?: { role?: string } };
           if (nodeData && !nodeData.isActive && nodeData.node?.role !== 'user') {
@@ -313,6 +354,75 @@ export default function ChatCanvas() {
       >
         <Focus size={20} />
       </button>
+
+      {/* 节点总结入口 */}
+      {isSelectingMode ? (
+        <>
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-leaf-50 border border-leaf-100 text-sm text-leaf-700 shadow-sm pointer-events-none">
+            <span>点击节点多选</span>
+            <span className="text-leaf-300">|</span>
+            <span>已选 {selectedNodeIds.length} 个</span>
+            <span className="text-leaf-300">|</span>
+            <span>ESC 退出</span>
+          </div>
+          <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+            <button
+              onClick={exitSelectingMode}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 bg-white rounded-full border border-gray-200 shadow-sm transition-colors"
+            >
+              <X size={14} />
+              取消
+            </button>
+            <button
+              onClick={handleGenerateSummary}
+              disabled={selectedNodeIds.length === 0}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-full shadow-sm transition-colors bg-leaf-600 hover:bg-leaf-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
+            >
+              <Sparkles size={14} />
+              生成总结{selectedNodeIds.length > 0 ? ` (${selectedNodeIds.length})` : ''}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+          <button
+            onClick={() => setShowGlobalPrompt(true)}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2 text-sm rounded-full border shadow-sm transition-colors',
+              hasGlobalPrompt
+                ? 'bg-leaf-50 text-leaf-700 border-leaf-200'
+                : 'bg-white text-gray-600 border-gray-200 hover:text-leaf-600 hover:bg-leaf-50'
+            )}
+            title="编辑会话背景约束"
+          >
+            <BookOpen size={14} />
+            会话背景
+            {hasGlobalPrompt && <span className="w-1.5 h-1.5 rounded-full bg-leaf-500" />}
+          </button>
+          <button
+            onClick={enterSelectingMode}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors"
+            title="选择多个节点进行知识总结"
+          >
+            <Sparkles size={14} />
+            节点总结
+          </button>
+        </div>
+      )}
+
+      {summaryNodes && (
+        <SummaryModal
+          nodes={summaryNodes}
+          onClose={() => setSummaryNodes(null)}
+        />
+      )}
+
+      {showGlobalPrompt && (
+        <GlobalPromptModal
+          sessionId={session.id}
+          onClose={() => setShowGlobalPrompt(false)}
+        />
+      )}
     </div>
   );
 }

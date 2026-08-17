@@ -23,6 +23,7 @@ import {
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
+import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import type { FolderItem } from '../../types';
 
@@ -66,7 +67,7 @@ export default function FileManagerPage() {
       const tempPath: { id: string; name: string }[] = [];
 
       while (currentId) {
-        const item = items[currentId];
+        const item: FolderItem | undefined = items[currentId];
         if (item) {
           tempPath.unshift({ id: currentId, name: item.name });
           currentId = item.parentId;
@@ -145,10 +146,13 @@ export default function FileManagerPage() {
     const item = items[id];
     if (!item) return;
 
-    const newName = prompt('重命名:', item.name);
-    if (newName && newName.trim()) {
-      renameFolder(id, newName.trim());
-    }
+    useDialogStore.getState().showPrompt({
+      title: '重命名',
+      initialValue: item.name,
+      onConfirm: (newName) => {
+        renameFolder(id, newName);
+      },
+    });
     setContextMenu(null);
   };
 
@@ -158,16 +162,26 @@ export default function FileManagerPage() {
     if (!item) return;
 
     if (item.type === 'folder') {
-      if (confirm('确定要删除此文件夹及其所有内容吗？')) {
-        deleteFolder(id);
-      }
+      useDialogStore.getState().showConfirm({
+        title: '删除文件夹',
+        message: '确定要删除此文件夹及其所有内容吗？',
+        danger: true,
+        confirmText: '删除',
+        onConfirm: () => deleteFolder(id),
+      });
     } else {
-      if (confirm('确定要删除此对话文件吗？')) {
-        if (item.sessionId) {
-          deleteSession(item.sessionId);
-        }
-        deleteSessionItem(id);
-      }
+      useDialogStore.getState().showConfirm({
+        title: '删除对话文件',
+        message: '确定要删除此对话文件吗？',
+        danger: true,
+        confirmText: '删除',
+        onConfirm: () => {
+          if (item.sessionId) {
+            deleteSession(item.sessionId);
+          }
+          deleteSessionItem(id);
+        },
+      });
     }
     setContextMenu(null);
   };

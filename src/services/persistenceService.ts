@@ -8,7 +8,6 @@ import { useSessionStore } from '../store/sessionStore';
 import { useAPIConfigStore } from '../store/apiConfigStore';
 import { useFolderStore } from '../store/folderStore';
 import { repository } from '../repository';
-import type { FolderItem } from '../types';
 
 // 是否启用自动保存
 let autoSaveEnabled = false;
@@ -16,46 +15,6 @@ let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 防抖保存延迟（毫秒）
 const SAVE_DELAY = 500;
-
-// 数据迁移标记
-const MIGRATION_KEY = 'prunus-folder-migration-done';
-
-/**
- * 生成唯一的文件夹项 ID
- */
-const generateId = () => Math.random().toString(36).substring(2, 9);
-
-/**
- * 检查是否需要数据迁移
- * 只有当 folder 表为空且有 sessions 时才需要迁移
- */
-async function needsMigration(): Promise<boolean> {
-  const folderItems = await repository.folder.getAll();
-  const sessions = await repository.session.getAll();
-  return folderItems.length === 0 && sessions.length > 0;
-}
-
-/**
- * 执行数据迁移：将现有 sessions 转为 FolderItem
- */
-async function migrateSessionsToFolderItems(): Promise<void> {
-  const sessions = await repository.session.getAll();
-  if (sessions.length === 0) return;
-
-  const folderItems = sessions.map((session, index) => ({
-    id: `folder-session-${session.id}`, // 使用固定的ID格式，确保唯一性
-    name: session.title || 'Untitled',
-    type: 'session' as const,
-    parentId: null,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    order: index,
-    sessionId: session.id,
-  }));
-
-  await repository.folder.saveAll(folderItems);
-  console.log(`[Migration] Migrated ${folderItems.length} sessions to folder items`);
-}
 
 /**
  * 初始化持久化
@@ -95,40 +54,6 @@ export async function initPersistence(): Promise<void> {
   } catch (error) {
     console.error('[Persistence] Failed to initialize:', error);
   }
-}
-
-/**
- * 清理重复的 FolderItem
- * 对于同一个 sessionId，只保留一个 FolderItem
- */
-function cleanDuplicateFolderItems(items: FolderItem[]): FolderItem[] {
-  const sessionIdMap = new Map<string, FolderItem>();
-  const folders: FolderItem[] = [];
-  const result: FolderItem[] = [];
-
-  // 先收集所有文件夹
-  items.forEach(item => {
-    if (item.type === 'folder') {
-      folders.push(item);
-    }
-  });
-
-  // 对于会话项，每个sessionId只保留一个
-  items.forEach(item => {
-    if (item.type === 'session' && item.sessionId) {
-      const existing = sessionIdMap.get(item.sessionId);
-      if (!existing) {
-        // 第一个遇到的，保留
-        sessionIdMap.set(item.sessionId, item);
-        result.push(item);
-      }
-      // 重复的跳过
-    } else if (item.type === 'folder') {
-      result.push(item);
-    }
-  });
-
-  return result;
 }
 
 /**

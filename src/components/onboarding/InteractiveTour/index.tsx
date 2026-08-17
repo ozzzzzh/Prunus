@@ -8,12 +8,10 @@
  * - 监听用户操作并验证步骤
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useUIStore } from '../../../store/uiStore';
-import { useSessionStore } from '../../../store/sessionStore';
-import { useGenerationStore } from '../../../store/generationStore';
-import { TOUR_STEPS, getTotalSteps } from '../../../types/tour';
+import { TOUR_STEPS } from '../../../types/tour';
 import type { TourStep } from '../../../types/tour';
 import TourOverlay from './TourOverlay';
 import TourCompletion from './TourCompletion';

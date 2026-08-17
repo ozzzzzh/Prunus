@@ -24,6 +24,7 @@ import {
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
+import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import type { TreeNode, FolderItem } from '../../types';
 
@@ -38,8 +39,6 @@ export default function Sidebar() {
     itemId: string;
     itemName: string;
   } | null>(null);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-
   // Store 状态
   const items = useFolderStore((state) => state.items);
   const getTree = useFolderStore((state) => state.getTree);
@@ -96,14 +95,17 @@ export default function Sidebar() {
     const item = items[itemId];
     if (!item) return;
 
-    const newName = prompt('重命名:', item.name);
-    if (newName && newName.trim()) {
-      renameItem(itemId, newName.trim());
-      // 如果是 session 项，同步更新 sessionStore 中的 title
-      if (item.type === 'session' && item.sessionId) {
-        useSessionStore.getState().renameSession(item.sessionId, newName.trim());
-      }
-    }
+    useDialogStore.getState().showPrompt({
+      title: '重命名',
+      initialValue: item.name,
+      onConfirm: (newName) => {
+        renameItem(itemId, newName);
+        // 如果是 session 项，同步更新 sessionStore 中的 title
+        if (item.type === 'session' && item.sessionId) {
+          useSessionStore.getState().renameSession(item.sessionId, newName);
+        }
+      },
+    });
   }, [items, renameItem]);
 
   // 删除
@@ -112,16 +114,26 @@ export default function Sidebar() {
     if (!item) return;
 
     if (item.type === 'folder') {
-      if (confirm('确定要删除此文件夹及其所有内容吗？')) {
-        deleteFolder(itemId);
-      }
+      useDialogStore.getState().showConfirm({
+        title: '删除文件夹',
+        message: '确定要删除此文件夹及其所有内容吗？',
+        danger: true,
+        confirmText: '删除',
+        onConfirm: () => deleteFolder(itemId),
+      });
     } else {
-      if (confirm('确定要删除此对话文件吗？')) {
-        if (item.sessionId) {
-          deleteSession(item.sessionId);
-        }
-        deleteSessionItem(itemId);
-      }
+      useDialogStore.getState().showConfirm({
+        title: '删除对话文件',
+        message: '确定要删除此对话文件吗？',
+        danger: true,
+        confirmText: '删除',
+        onConfirm: () => {
+          if (item.sessionId) {
+            deleteSession(item.sessionId);
+          }
+          deleteSessionItem(itemId);
+        },
+      });
     }
   }, [items, deleteFolder, deleteSession, deleteSessionItem]);
 

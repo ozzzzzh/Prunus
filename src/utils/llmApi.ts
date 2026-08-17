@@ -11,6 +11,7 @@ export async function generateAIResponse(
   onChunk?: (data: { content: string; reasoning?: string }) => void,
   options?: {
     enableThinking?: boolean;  // 是否开启深度思考
+    temperature?: number;      // 采样温度
   }
 ): Promise<{ content: string; reasoning: string }> {
   // 使用本地代理路径，API Key 由代理从环境变量添加
@@ -43,7 +44,7 @@ export async function generateAIResponse(
       model: model.trim() || DEFAULT_MODEL,
       messages: messages,
       stream: true,
-      temperature: 0.7,
+      temperature: options?.temperature ?? 0.7,
     };
 
     // GLM-5 thinking 控制（智谱格式）
@@ -56,7 +57,7 @@ export async function generateAIResponse(
     }
     // 如果不传 options.enableThinking，使用模型默认（GLM-5 默认开启）
 
-    const stream = await client.chat.completions.create(requestParams as any);
+    const stream = await client.chat.completions.create(requestParams as any) as unknown as AsyncIterable<any>;
 
     let fullContent = '';
     let fullReasoning = '';

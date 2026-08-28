@@ -51,6 +51,7 @@ export default defineConfig(({ mode }) => {
     define: {
       'import.meta.env.VITE_LLM_MODEL': JSON.stringify(llmModel),
       'import.meta.env.VITE_ENABLE_THINKING': JSON.stringify(env.ENABLE_THINKING === 'true'),
+      'import.meta.env.VITE_COMMUNITY_API': JSON.stringify(env.COMMUNITY_API || ''),
     },
   };
 });

@@ -1,7 +1,9 @@
-import { X, Download, Brain } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, Download, Brain, Ticket } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useAPIConfigStore } from '../../store/apiConfigStore';
+import { fetchQuota } from '../../utils/cdkService';
 import { cn } from '../../utils/cn';
 
 export default function SettingsModal() {
@@ -10,6 +12,20 @@ export default function SettingsModal() {
   const sessions = useSessionStore(state => state.sessions);
   const config = useAPIConfigStore(state => state.config);
   const updateConfig = useAPIConfigStore(state => state.updateConfig);
+  const resetConfig = useAPIConfigStore(state => state.resetConfig);
+
+  // CDK 额度
+  const [quota, setQuota] = useState<{ quota: number; used_quota: number; remaining: number } | null>(null);
+
+  useEffect(() => {
+    if (isSettingsOpen && config.mode === 'cdk' && config.apiKey) {
+      fetchQuota(config.apiKey)
+        .then(setQuota)
+        .catch(() => setQuota(null));
+    } else {
+      setQuota(null);
+    }
+  }, [isSettingsOpen, config.mode, config.apiKey]);
 
   // 导出 sessions 为 JSON 文件
   const handleExport = () => {
@@ -72,65 +88,107 @@ export default function SettingsModal() {
           )}
         </div>
 
-        {/* API 配置（BYOK） */}
+        {/* API 配置 */}
         <div className="pt-4 border-t border-gray-100 mb-6">
-          <h3 className="text-sm font-medium text-gray-700 mb-1">API 配置</h3>
-          <p className="text-[11px] text-gray-400 mb-3 leading-relaxed">
-            填写 Base URL 与 API Key 后，将使用你自己的 Key 直连大模型；留空则使用服务器默认配置（仅 OpenAI 协议）。
-          </p>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500">协议 Protocol</label>
-              <div className="mt-1 flex gap-1 bg-gray-100 rounded-lg p-1">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">API 配置</h3>
+
+          {/* CDK 模式：额度 + 重新配置 */}
+          {config.mode === 'cdk' && (
+            <div className="mb-4 p-3 bg-leaf-50 rounded-lg border border-leaf-100">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <Ticket size={14} /> 兑换码模式（社区版）
+                </span>
                 <button
-                  onClick={() => updateConfig({ protocol: 'openai' })}
-                  className={cn(
-                    'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
-                    config.protocol === 'openai' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
-                  )}
+                  onClick={() => { resetConfig(); toggleSettings(false); }}
+                  className="text-xs text-gray-500 hover:text-leaf-600"
                 >
-                  OpenAI
-                </button>
-                <button
-                  onClick={() => updateConfig({ protocol: 'anthropic' })}
-                  className={cn(
-                    'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
-                    config.protocol === 'anthropic' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
-                  )}
-                >
-                  Anthropic
+                  重新配置
                 </button>
               </div>
+              <p className="text-xs text-gray-600">
+                剩余额度：
+                <span className="font-medium text-leaf-700">
+                  {quota ? `${quota.remaining.toLocaleString()} / ${quota.quota.toLocaleString()}` : '加载中...'}
+                </span>
+              </p>
             </div>
-            <div>
-              <label className="text-xs text-gray-500">模型 Model</label>
-              <input
-                value={config.model}
-                onChange={(e) => updateConfig({ model: e.target.value })}
-                placeholder="deepseek-v4-flash"
-                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
-              />
+          )}
+
+          {/* BYOK 模式标签 */}
+          {config.mode === 'byok' && (
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100 flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">自己的 Key 模式</span>
+              <button
+                onClick={() => { resetConfig(); toggleSettings(false); }}
+                className="text-xs text-gray-500 hover:text-leaf-600"
+              >
+                重新配置
+              </button>
             </div>
-            <div>
-              <label className="text-xs text-gray-500">Base URL</label>
-              <input
-                value={config.baseUrl}
-                onChange={(e) => updateConfig({ baseUrl: e.target.value })}
-                placeholder={config.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.deepseek.com'}
-                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">API Key</label>
-              <input
-                type="password"
-                value={config.apiKey}
-                onChange={(e) => updateConfig({ apiKey: e.target.value })}
-                placeholder="留空使用服务器默认 Key"
-                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
-              />
-            </div>
-          </div>
+          )}
+
+          {/* BYOK 输入（非 CDK 模式显示） */}
+          {config.mode !== 'cdk' && (
+            <>
+              <p className="text-[11px] text-gray-400 mb-3 leading-relaxed">
+                填写 Base URL 与 API Key 后，将使用你自己的 Key 直连大模型。
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500">协议 Protocol</label>
+                  <div className="mt-1 flex gap-1 bg-gray-100 rounded-lg p-1">
+                    <button
+                      onClick={() => updateConfig({ protocol: 'openai' })}
+                      className={cn(
+                        'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
+                        config.protocol === 'openai' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
+                      )}
+                    >
+                      OpenAI
+                    </button>
+                    <button
+                      onClick={() => updateConfig({ protocol: 'anthropic' })}
+                      className={cn(
+                        'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
+                        config.protocol === 'anthropic' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
+                      )}
+                    >
+                      Anthropic
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">模型 Model</label>
+                  <input
+                    value={config.model}
+                    onChange={(e) => updateConfig({ model: e.target.value })}
+                    placeholder="deepseek-v4-flash"
+                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Base URL</label>
+                  <input
+                    value={config.baseUrl}
+                    onChange={(e) => updateConfig({ baseUrl: e.target.value })}
+                    placeholder={config.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.deepseek.com'}
+                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">API Key</label>
+                  <input
+                    type="password"
+                    value={config.apiKey}
+                    onChange={(e) => updateConfig({ apiKey: e.target.value })}
+                    placeholder="sk-..."
+                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* 数据管理 */}

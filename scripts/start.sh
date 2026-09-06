@@ -12,7 +12,7 @@ if ! command -v pm2 &> /dev/null; then
 fi
 
 # 启动项目
-pm2 start ecosystem.config.cjs
+pm2 start deploy/ecosystem.config.cjs
 
 # 显示状态
 pm2 status

@@ -5,9 +5,10 @@ import { useGenerationStore } from '../../store/generationStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useAPIConfigStore } from '../../store/apiConfigStore';
+import { useDialogStore } from '../../store/dialogStore';
 import type { AIRole } from '../../types';
 import { isAIChatNode } from '../../types';
-import { generateAIResponse } from '../../utils/llmApi';
+import { generateAIResponse, QuotaExceededError } from '../../utils/llmApi';
 import FormatToolbar, { FormatSubMenu } from './FormatToolbar';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
 
@@ -105,7 +106,12 @@ export default function ChatInput() {
 
     } catch (error: unknown) {
       const err = error as Error;
-      useChatStore.getState().addMessage('system', `Error: ${err.message || 'Failed to connect to AI API'}`, userNodeId);
+      if (err instanceof QuotaExceededError) {
+        useDialogStore.getState().showToast('额度已用完，请在设置中兑换新的兑换码', { type: 'error' });
+        useUIStore.getState().toggleSettings(true);
+      } else {
+        useChatStore.getState().addMessage('system', `Error: ${err.message || 'Failed to connect to AI API'}`, userNodeId);
+      }
     } finally {
       setIsLoading(false);
       setGeneratingNodeId(null);

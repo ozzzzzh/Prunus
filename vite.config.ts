@@ -11,11 +11,13 @@ export default defineConfig(({ mode }) => {
   const llmBaseUrl = env.LLM_BASE_URL || 'https://api.openai.com/v1';
   const llmApiKey = env.LLM_API_KEY || '';
   const llmModel = env.LLM_MODEL || 'gpt-3.5-turbo';
+  const base = process.env.BASE_URL || (mode === 'production' ? '/app/' : '/');
 
   console.log('[Vite Config] LLM Proxy Target:', llmBaseUrl);
   console.log('[Vite Config] LLM Model:', llmModel);
 
   return {
+    base, 
     plugins: [
       react(),
       tailwindcss(),
@@ -51,6 +53,7 @@ export default defineConfig(({ mode }) => {
     define: {
       'import.meta.env.VITE_LLM_MODEL': JSON.stringify(llmModel),
       'import.meta.env.VITE_ENABLE_THINKING': JSON.stringify(env.ENABLE_THINKING === 'true'),
+      'import.meta.env.VITE_COMMUNITY_API': JSON.stringify(env.COMMUNITY_API || ''),
     },
   };
 });

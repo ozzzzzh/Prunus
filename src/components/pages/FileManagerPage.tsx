@@ -26,6 +26,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import type { FolderItem } from '../../types';
+import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
 type ViewMode = 'grid' | 'list';
 type SortMode = 'name' | 'date';
@@ -216,7 +217,7 @@ export default function FileManagerPage() {
               <ArrowLeft size={20} className="text-gray-600" />
             </button>
             <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                <img src="/src/assets/PrunusLogoHighQuality.jpg" alt="Prunus Logo" className="w-7 h-7 rounded-full object-cover" />
+                <img src={logo} alt="Prunus Logo" className="w-7 h-7 rounded-full object-cover" />
                 <span>文件管理</span>
               </h1>
           </div>
@@ -324,7 +325,7 @@ export default function FileManagerPage() {
               <p className="text-gray-500 mb-6 leading-relaxed inline-flex items-center justify-center flex-wrap">
                 让思维如枝桠般
                 <img
-                  src="/src/assets/PrunusLogoHighQuality.jpg"
+                  src={logo}
                   alt="Prunus Logo"
                   className="w-5 h-5 rounded-full object-cover mx-1"
                 />

@@ -11,13 +11,16 @@ import SettingsModal from './components/layout/SettingsModal';
 import DialogHost from './components/layout/DialogHost';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
+import LLMSetupScreen from './components/setup/LLMSetupScreen';
 import { HelpPanel, InteractiveTour } from './components/onboarding';
 import ExpandedView from './components/expanded/ExpandedView';
 import { useSessionStore } from './store/sessionStore';
 import { useFolderStore } from './store/folderStore';
 import { useUIStore } from './store/uiStore';
+import { useAPIConfigStore } from './store/apiConfigStore';
 import { initPersistence, enableAutoSave } from './services/persistenceService';
 import { cn } from './utils/cn';
+import logo from './assets/PrunusLogoHighQuality.jpg';
 
 function App() {
   const sessions = useSessionStore(state => state.sessions);
@@ -29,6 +32,7 @@ function App() {
   const expandedNodeId = useUIStore(state => state.expandedNodeId);
 
   const folderItems = useFolderStore(state => state.items);
+  const mode = useAPIConfigStore(state => state.config.mode);
 
   // 初始化状态
   const [isInitialized, setIsInitialized] = useState(false);
@@ -82,16 +86,22 @@ function App() {
     setCurrentPage('fileManager');
   };
 
+  // 等待初始化完成
+  if (!isInitialized) {
+    return (
+      <div className="h-screen w-screen bg-[#fafafa] flex items-center justify-center">
+        <div className="text-gray-500 text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  // LLM 配置闸门：未配置前阻断使用
+  if (mode === 'unconfigured') {
+    return <LLMSetupScreen />;
+  }
+
   // 如果在文件管理页面，直接返回文件管理页面组件
   if (currentPage === 'fileManager') {
-    // 等待初始化完成后再渲染
-    if (!isInitialized) {
-      return (
-        <div className="h-screen w-screen bg-[#fafafa] flex items-center justify-center">
-          <div className="text-gray-500 text-sm">Loading...</div>
-        </div>
-      );
-    }
     return (
       <>
         <FileManagerPage />
@@ -118,7 +128,7 @@ function App() {
           {sidebarCollapsed && (
             <>
               <img
-                src="/src/assets/PrunusLogoHighQuality.jpg"
+                src={logo}
                 alt="Prunus Logo"
                 className="w-6 h-6 rounded-full object-cover mr-2 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => setCurrentPage('fileManager')}

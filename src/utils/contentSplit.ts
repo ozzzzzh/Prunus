@@ -1,3 +1,11 @@
+/*
+ * @Author: 钟焓(Egan H. Zhong)
+ * @Date: 2026-08-14 11:54:30
+ * @LastEditors: 钟焓(Egan H. Zhong)
+ * @LastEditTime: 2026-09-08 10:26:01
+ * @FilePath: \Prunus\src\utils\contentSplit.ts
+ * @Description: 
+ */
 /**
  * 本地内容结构化拆分
  *
@@ -10,7 +18,7 @@ export interface LocalSplitResult {
   branches: string[];
 }
 
-const HEADING_REGEX = /^\s{0,3}#{1,4}\s+/;
+const HEADING_REGEX = /^\s{0,3}#\s+/;
 const NUMBERED_LIST_REGEX = /^\s{0,3}(?:\d{1,3}[.、．)](?!\d)|[一二三四五六七八九十]+[、.])\s*/;
 
 function isFenceLine(line: string): boolean {

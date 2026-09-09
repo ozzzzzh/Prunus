@@ -1,4 +1,12 @@
-# Prunus 🍑
+<!--
+ * @Author: 钟焓(Egan H. Zhong)
+ * @Date: 2026-04-02 11:55:30
+ * @LastEditors: 钟焓(Egan H. Zhong)
+ * @LastEditTime: 2026-09-08 15:50:31
+ * @FilePath: \Prunus\README.md
+ * @Description: 
+-->
+# Prunus 
 
 Prunus（李属/桃树）是一个创新的 AI 对话产品。其命名灵感来源于创作者儿时曾祖母（太太）栽种的桃树，蕴含深厚的情感记忆。同时，“树”的意象完美契合了产品“树状/网状对话流”的核心功能与网状思维的哲学理念，将硬核的技术愿景与个人的温情记忆深度链接。
 

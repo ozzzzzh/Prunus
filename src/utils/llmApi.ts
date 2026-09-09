@@ -17,6 +17,14 @@ type GenerateOptions = {
   temperature?: number;      // 采样温度
 };
 
+/** 额度耗尽错误（CDK 模式，后端返回 402） */
+export class QuotaExceededError extends Error {
+  constructor() {
+    super('额度已用完，请兑换新的兑换码或切换自己的 Key');
+    this.name = 'QuotaExceededError';
+  }
+}
+
 export async function generateAIResponse(
   messages: LLMMessage[],
   onChunk?: (data: { content: string; reasoning?: string }) => void,
@@ -107,7 +115,11 @@ export async function generateAIResponse(
     }
 
     if (err.status === 401) {
-      throw new Error('Authentication Error: Please check your LLM_API_KEY in .env.local file.');
+      throw new Error('API Key 无效，请检查你的 API Key 配置');
+    }
+
+    if (err.status === 402) {
+      throw new QuotaExceededError();
     }
 
     if (err.status === 403) {

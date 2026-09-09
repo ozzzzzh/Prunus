@@ -27,6 +27,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import type { TreeNode, FolderItem } from '../../types';
+import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
 export default function Sidebar() {
   const [contextMenu, setContextMenu] = useState<{
@@ -319,7 +320,7 @@ export default function Sidebar() {
           onClick={() => useUIStore.getState().setCurrentPage('fileManager')}
           title="打开文件管理"
         >
-          <img src="/src/assets/PrunusLogoHighQuality.jpg" alt="Prunus Logo" className="w-6 h-6 rounded-full object-cover" />
+          <img src={logo} alt="Prunus Logo" className="w-6 h-6 rounded-full object-cover" />
           <span className="flex">
             {['P', 'r', 'u', 'n', 'u', 's'].map((letter, index) => (
               <span

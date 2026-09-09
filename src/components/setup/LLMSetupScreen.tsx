@@ -3,6 +3,7 @@ import { KeyRound, Ticket, Sparkles } from 'lucide-react';
 import { useAPIConfigStore, type LLMProtocol } from '../../store/apiConfigStore';
 import { redeemCdk, communityV1Url, hasCommunityBackend } from '../../utils/cdkService';
 import { cn } from '../../utils/cn';
+import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
 export default function LLMSetupScreen() {
   const config = useAPIConfigStore((s) => s.config);
@@ -59,7 +60,7 @@ export default function LLMSetupScreen() {
       <div className="w-full max-w-md bg-white rounded-2xl shadow-[0_20px_40px_-8px_rgba(0,0,0,0.15)] border border-gray-200 p-8 my-8">
         {/* 头部 */}
         <div className="flex items-center gap-3 mb-2">
-          <img src="/src/assets/PrunusLogoHighQuality.jpg" alt="Prunus" className="w-10 h-10 rounded-full object-cover" />
+          <img src={logo} alt="Prunus" className="w-10 h-10 rounded-full object-cover" />
           <h1 className="text-xl font-bold text-gray-800">开始使用 Prunus</h1>
         </div>
         <p className="text-sm text-gray-500 mb-6 leading-relaxed">

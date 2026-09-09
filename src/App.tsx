@@ -20,6 +20,7 @@ import { useUIStore } from './store/uiStore';
 import { useAPIConfigStore } from './store/apiConfigStore';
 import { initPersistence, enableAutoSave } from './services/persistenceService';
 import { cn } from './utils/cn';
+import logo from './assets/PrunusLogoHighQuality.jpg';
 
 function App() {
   const sessions = useSessionStore(state => state.sessions);
@@ -127,7 +128,7 @@ function App() {
           {sidebarCollapsed && (
             <>
               <img
-                src="/src/assets/PrunusLogoHighQuality.jpg"
+                src={logo}
                 alt="Prunus Logo"
                 className="w-6 h-6 rounded-full object-cover mr-2 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => setCurrentPage('fileManager')}

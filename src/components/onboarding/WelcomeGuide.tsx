@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { GitBranch, Navigation, Lightbulb, ChevronLeft, ChevronRight, LayoutDashboard, Pencil } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import { cn } from '../../utils/cn';
+import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
 interface GuideStep {
   icon: typeof GitBranch;
@@ -154,7 +155,7 @@ export default function WelcomeGuide() {
           <p className="text-xs text-gray-400 flex items-center justify-center gap-2">
             欢迎使用 Prunus
             <img
-              src="/src/assets/PrunusLogoHighQuality.jpg"
+              src={logo}
               alt="Prunus Logo"
               className="w-5 h-5 rounded-full object-cover"
             />

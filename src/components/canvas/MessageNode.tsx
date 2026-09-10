@@ -1,4 +1,4 @@
-import { Handle, Position, NodeToolbar } from '@xyflow/react';
+import { Handle, Position, NodeToolbar, useReactFlow } from '@xyflow/react';
 import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,9 +11,11 @@ import { useGenerationStore } from '../../store/generationStore';
 import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
+import { DEFAULT_WIDTH, DEFAULT_HEIGHT, clampSize } from '../../utils/nodeSize';
+import { countRender } from '../../utils/devCounters';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { splitContentLocally } from '../../utils/contentSplit';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { markdownToHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
 
@@ -32,6 +34,9 @@ const MARKER_OPTIONS = [
   { emoji: '🌱', label: 'Seed' },
 ];
 
+/** 角标需长按这么久才进入缩放模式，避免误触 */
+const RESIZE_ARM_MS = 300;
+
 interface MessageNodeProps {
   data: {
     node: PrunusNode;
@@ -39,7 +44,9 @@ interface MessageNodeProps {
   };
 }
 
-export default function MessageNode({ data }: MessageNodeProps) {
+function MessageNode({ data }: MessageNodeProps) {
+  countRender('MessageNode'); // 临时诊断：拖动期间的增长量 = 重渲染次数
+
   const { node, isActive } = data;
   const focusNode = useChatStore((state) => state.focusNode);
   const splitNodeIntoBranches = useChatStore((state) => state.splitNodeIntoBranches);
@@ -70,10 +77,24 @@ export default function MessageNode({ data }: MessageNodeProps) {
   const [menuFading, setMenuFading] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const prevCollapsedRef = useRef(node.collapsed);
 
   // 是否处于编辑模式
   const isEditing = editingNodeId === node.id;
+
+  // ===== 手动缩放节点 =====
+  const setNodeSize = useSessionStore((state) => state.setNodeSize);
+  const { getZoom } = useReactFlow();
+
+  // 拖拽中的实时尺寸：只存本地 state，避免每次 pointermove 都触发全树重排
+  const [liveSize, setLiveSize] = useState<{ w: number; h: number } | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const armedRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, pointerId: -1 });
+  const armTimerRef = useRef<number | null>(null);
+  // liveSize 的 ref 镜像：pointerup 时可能尚未重渲染，读 state 会拿到旧值
+  const liveSizeRef = useRef<{ w: number; h: number } | null>(null);
 
   // 从展开变成收缩时，自动显示 tooltip
   useEffect(() => {
@@ -94,6 +115,122 @@ export default function MessageNode({ data }: MessageNodeProps) {
   );
   const isReasoning = useGenerationStore((state) =>
     state.generatingNodeId === node.id ? state.isReasoning : false
+  );
+
+  // ===== 长按右下角标缩放 =====
+  const clearArmTimer = () => {
+    if (armTimerRef.current !== null) {
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
+    }
+  };
+
+  const resetResizeVisuals = () => {
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    armedRef.current = false;
+    liveSizeRef.current = null;
+    setIsResizing(false);
+    setLiveSize(null);
+  };
+
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // 中/右键留给画布平移
+    if (isEditing || isSelectingMode) return;
+    // pointerdown 的 stopPropagation 不会抑制随后的合成 click，
+    // 因此角标上还需单独拦截 click/dblclick（见 JSX）。
+    e.stopPropagation();
+    e.preventDefault();
+
+    const card = cardRef.current;
+    if (!card) return;
+
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      w: node.width ?? card.offsetWidth,
+      h: node.height ?? card.offsetHeight,
+      pointerId: e.pointerId,
+    };
+    armedRef.current = false;
+
+    const handle = e.currentTarget;
+    clearArmTimer();
+    armTimerRef.current = window.setTimeout(() => {
+      armTimerRef.current = null;
+      armedRef.current = true;
+      setIsResizing(true);
+      liveSizeRef.current = { w: dragStartRef.current.w, h: dragStartRef.current.h };
+      setLiveSize(liveSizeRef.current);
+      try {
+        handle.setPointerCapture(dragStartRef.current.pointerId);
+      } catch {
+        // 指针已释放，忽略
+      }
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'nwse-resize';
+    }, RESIZE_ARM_MS);
+  };
+
+  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!armedRef.current) return;
+    e.stopPropagation();
+
+    const zoom = getZoom() || 1;
+    const next = clampSize({
+      width: dragStartRef.current.w + (e.clientX - dragStartRef.current.x) / zoom,
+      height: dragStartRef.current.h + (e.clientY - dragStartRef.current.y) / zoom,
+    });
+    liveSizeRef.current = { w: next.width, h: next.height };
+    setLiveSize(liveSizeRef.current);
+  };
+
+  const handleResizeEnd = () => {
+    clearArmTimer();
+    if (!armedRef.current) return; // 短按：完全无副作用
+
+    const finalSize = liveSizeRef.current;
+    resetResizeVisuals();
+    if (finalSize) {
+      setNodeSize(node.id, { width: finalSize.w, height: finalSize.h });
+    }
+  };
+
+  const handleResizeCancel = () => {
+    clearArmTimer();
+    if (!armedRef.current) return;
+    resetResizeVisuals();
+  };
+
+  // 拖拽中按 Escape 取消（不提交）
+  useEffect(() => {
+    if (!isResizing) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleResizeCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
+  // 卸载时清掉定时器与 body 上的临时样式
+  useEffect(() => () => {
+    clearArmTimer();
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  }, []);
+
+  // 视口剔除会让节点滚出视野时卸载。若此时正处于编辑态，组件内的 editorContent
+  // 会随之丢失；节点重新进入视野时会重新挂载，编辑器内容为空却仍标记为「编辑中」，
+  // 一旦失焦就会把空内容写回节点 —— 静默的数据丢失。卸载时必须清掉编辑态。
+  // （代价：滚出视野时未保存的编辑内容会被丢弃，而不是写入空值。）
+  useEffect(
+    () => () => {
+      const ui = useUIStore.getState();
+      if (ui.editingNodeId === node.id) {
+        ui.setEditingNode(null);
+      }
+    },
+    [node.id]
   );
 
   useEffect(() => {
@@ -158,6 +295,28 @@ export default function MessageNode({ data }: MessageNodeProps) {
       setPendingContent(null);
     }
   }, [node.content, pendingContent]);
+
+  // Markdown 渲染结果按内容缓存。
+  // 这是整个节点最贵的操作（remark-gfm 解析 + rehype-raw 重建 HTML），
+  // 不缓存的话，父组件每次重渲染都会把所有可见节点的全文重新解析一遍。
+  const renderedReasoning = useMemo(
+    () =>
+      displayReasoning ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+          {preprocessMarkdown(displayReasoning)}
+        </ReactMarkdown>
+      ) : null,
+    [displayReasoning]
+  );
+
+  const renderedContent = useMemo(
+    () => (
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+        {preprocessMarkdown(displayContent)}
+      </ReactMarkdown>
+    ),
+    [displayContent]
+  );
 
   // 获取缩略信息（剥离 HTML 标签和 markdown 符号）
   const getSummary = () => {
@@ -470,7 +629,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
     return (
       <>
         <div
-          className="w-[480px] h-[56px] flex items-center justify-center"
+          className="w-14 h-14 flex items-center justify-center"
           onContextMenu={handleContextMenu}
         >
           <div
@@ -527,10 +686,18 @@ export default function MessageNode({ data }: MessageNodeProps) {
     );
   }
 
+  // 卡片尺寸始终显式：未缩放用默认值，缩放后用持久化值。
+  // 这保证「声明尺寸 == 渲染尺寸」，布局与屏幕永远一致（同层不重叠的前提）。
+  const cardStyle: React.CSSProperties = liveSize
+    ? { width: liveSize.w, height: liveSize.h }
+    : { width: node.width ?? DEFAULT_WIDTH, height: node.height ?? DEFAULT_HEIGHT };
+
   return (
     <>
       <div
+        ref={cardRef}
         onClick={(e) => {
+          if (isResizing) return;
           if (isSelectingMode) {
             e.stopPropagation();
             if (!isRootNode) {
@@ -548,8 +715,15 @@ export default function MessageNode({ data }: MessageNodeProps) {
         }}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
+        style={cardStyle}
         className={cn(
-          "w-[480px] rounded-2xl border p-4 transition-all duration-300 relative origin-top",
+          // 注意：不能对卡片用 transition-all —— 它会动画 width/height，
+          // 而 React Flow 靠测量节点几何来画连接线，几何持续变化会导致
+          // 测量错乱、连接线整条消失。只过渡颜色类属性：
+          // opacity 可能触发图层提升、box-shadow 重绘昂贵，都不进过渡列表。
+          "group rounded-2xl border p-4 flex flex-col relative",
+          "transition-[background-color,border-color] duration-300",
+          isResizing && "!transition-none select-none",
           isEditing && "editing-mode",
           isEditing
             ? "border-leaf-500 bg-white shadow-[0_4px_24px_-4px_rgba(0,0,0,0.15)] z-30 ring-2 ring-leaf-200"
@@ -581,7 +755,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
 
         <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
 
-        <div className="flex justify-between items-center mb-3">
+        <div className="flex justify-between items-center mb-3 shrink-0">
           <div className="flex items-center gap-2 pointer-events-none">
             <div className={cn(
               "p-1.5 rounded-lg flex items-center justify-center",
@@ -677,7 +851,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
 
         {/* Reasoning 内容 - 思考过程 */}
         {displayReasoning && displayReasoning.length > 0 && !isEditing && (
-          <div className="mb-3 border-l-2 border-amber-300 bg-amber-50/50 rounded-r-lg overflow-hidden">
+          <div className="mb-3 border-l-2 border-amber-300 bg-amber-50/50 rounded-r-lg overflow-hidden shrink-0">
             {/* 标题栏 - 可点击折叠 */}
             <div
               className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-amber-100/50 transition-colors"
@@ -703,12 +877,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
             {reasoningExpanded && (
               <div className="px-3 py-2 text-xs text-gray-600 leading-relaxed border-t border-amber-200/50 max-h-[150px] overflow-y-auto custom-scrollbar">
                 <div className="prose prose-xs max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
-                  >
-                    {preprocessMarkdown(displayReasoning || '')}
-                  </ReactMarkdown>
+                  {renderedReasoning}
                 </div>
               </div>
             )}
@@ -718,7 +887,7 @@ export default function MessageNode({ data }: MessageNodeProps) {
         {/* 主内容 */}
         <div
           ref={contentRef}
-          className="text-sm text-gray-900 leading-relaxed max-h-[300px] overflow-y-auto pr-1 custom-scrollbar"
+          className="text-sm text-gray-900 leading-relaxed pr-1 custom-scrollbar flex-1 min-h-0 overflow-y-auto"
           onDoubleClick={handleDoubleClick}
         >
           {isEditing ? (
@@ -743,17 +912,37 @@ export default function MessageNode({ data }: MessageNodeProps) {
             />
           ) : (
             <div className="prose prose-sm w-full max-w-none break-words">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw]}
-              >
-                {preprocessMarkdown(displayContent)}
-              </ReactMarkdown>
+              {renderedContent}
             </div>
           )}
         </div>
 
         <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
+
+        {/* 右下角缩放角标：长按 0.3s 后拖动 */}
+        {!isEditing && !isSelectingMode && (
+          <div
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={handleResizeEnd}
+            onPointerCancel={handleResizeCancel}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.stopPropagation()}
+            title="长按 0.3s 后拖动调整大小"
+            className={cn(
+              "nodrag nopan touch-none absolute bottom-0 right-0 w-5 h-5 z-20 flex items-end justify-end pb-0.5 pr-0.5 cursor-nwse-resize transition-opacity",
+              isActive || isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            )}
+          >
+            <span
+              className={cn(
+                "w-2.5 h-2.5 rounded-full border border-leaf-400 bg-white transition-colors",
+                isResizing && "bg-leaf-400 border-leaf-500 scale-125"
+              )}
+            />
+          </div>
+        )}
       </div>
 
       <NodeToolbar
@@ -881,3 +1070,36 @@ export default function MessageNode({ data }: MessageNodeProps) {
     </>
   );
 }
+
+/**
+ * 只比较真正影响渲染结果的字段。
+ *
+ * React Flow 会在每次布局重算时重建整个 node 对象（`data` 引用必然变化），
+ * 默认的浅比较会失效，所以必须自己挑字段比。漏掉哪个字段就会导致该字段
+ * 更新时节点不刷新——新增可渲染的节点字段时，记得同步加到这里。
+ */
+function arePropsEqual(prev: MessageNodeProps, next: MessageNodeProps): boolean {
+  if (prev.data.isActive !== next.data.isActive) return false;
+
+  const a = prev.data.node;
+  const b = next.data.node;
+  if (a === b) return true;
+
+  const aChat = isAIChatNode(a) ? a : null;
+  const bChat = isAIChatNode(b) ? b : null;
+
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.marker === b.marker &&
+    a.collapsed === b.collapsed &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.childrenIds.length === b.childrenIds.length &&
+    aChat?.role === bChat?.role &&
+    aChat?.reasoning === bChat?.reasoning &&
+    aChat?.reasoningCollapsed === bChat?.reasoningCollapsed
+  );
+}
+
+export default memo(MessageNode, arePropsEqual);

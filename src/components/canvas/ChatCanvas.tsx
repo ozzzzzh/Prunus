@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
-import { ReactFlow, Background, Controls, type Node, type Edge, useNodesState, useEdgesState, ConnectionMode, useReactFlow } from '@xyflow/react';
+import { ReactFlow, Background, Controls, type Node, type Edge, useNodesState, useEdgesState, ConnectionMode, useReactFlow, useStore } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Focus, Sparkles, X, BookOpen } from 'lucide-react';
 
@@ -9,10 +9,14 @@ import { useUIStore } from '../../store/uiStore';
 import { isAIChatNode } from '../../types';
 import type { SummaryNodeInput } from '../../utils/summarize';
 import { cn } from '../../utils/cn';
+import { resolveNodeSize } from '../../utils/nodeSize';
 import MessageNode from './MessageNode';
 import SummaryModal from '../summary/SummaryModal';
 import GlobalPromptModal from '../layout/GlobalPromptModal';
 import { getLayoutedElements } from '../../utils/layout';
+
+/** 节点中心离视口边缘多近时认为「快看不见了」，触发智能跟随 */
+const FOLLOW_MARGIN = 80;
 
 const nodeTypes = {
   message: MessageNode,
@@ -38,15 +42,18 @@ export default function ChatCanvas() {
   const hasGlobalPrompt = Boolean(session?.globalPrompt?.trim());
 
   // React Flow instance for programmatic view control
-  const { setCenter } = useReactFlow();
+  const { setCenter, getZoom, getViewport } = useReactFlow();
+  // 画布容器尺寸（为 0 表示 React Flow 还没测量完，此时居中会算错，必须等）
+  const paneWidth = useStore(state => state.width);
+  const paneHeight = useStore(state => state.height);
   const prevCurrentNodeId = useRef<string | null>(null);
 
-  // 直接收集所有节点的收缩状态作为依赖
-  const collapsedStates = useMemo(() => {
+  // 影响布局的全部输入：收缩状态 + 持久化的手动尺寸。
+  // 节点尺寸不做任何 DOM 测量，所以把这两者拼成依赖即可精确覆盖重排时机。
+  const sizeStates = useMemo(() => {
     if (!session) return '';
     return Object.values(session.nodes)
-      .filter(n => n.marker)
-      .map(n => `${n.id}:${n.collapsed ? 1 : 0}`)
+      .map(n => `${n.id}:${n.collapsed ? 1 : 0}:${n.width ?? ''}x${n.height ?? ''}`)
       .join('|');
   }, [session]);
 
@@ -70,10 +77,16 @@ export default function ChatCanvas() {
       // 路径上的节点我们叫做 isPath (用于连线高亮)
       const isPath = activePath.has(node.id);
 
+      const { width, height } = resolveNodeSize(node);
+
       nodes.push({
         id: node.id,
         type: 'message',
-        position: { x: 0, y: 0 }, // Handled by dagre
+        position: { x: 0, y: 0 }, // 由 getLayoutedElements 计算
+        // 显式声明尺寸：与卡片渲染尺寸、布局尺寸三者同源。
+        // React Flow 依赖它来做视口剔除与 fitView，无需再测量 DOM。
+        width,
+        height,
         data: { node, isActive: isCurrentFocus },
       });
 
@@ -96,7 +109,7 @@ export default function ChatCanvas() {
     });
 
     return getLayoutedElements(nodes, edges);
-  }, [session, collapsedStates]);
+  }, [session, sizeStates]);
 
   // Using controlled state for React Flow to allow interactions if needed
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -106,35 +119,58 @@ export default function ChatCanvas() {
   useEffect(() => {
     setNodes(initialNodes);
     setEdges(initialEdges);
+  }, [initialNodes, initialEdges, setNodes, setEdges]);
 
-    // Auto focus to current node if it changed
-    if (session && session.currentNodeId !== prevCurrentNodeId.current) {
-      prevCurrentNodeId.current = session.currentNodeId;
-      
-      // 找到当前节点
-      const currentNodeId = session.currentNodeId;
-      // 注意：由于 dagre 布局可能改变了引用，我们需要从最新的 nodes 状态里找
-      const currentNode = currentNodeId ? initialNodes.find(n => n.id === currentNodeId) : null;
+  /**
+   * 视口智能跟随。
+   *
+   * 两种情况需要动镜头：
+   *   1) 焦点切换（currentNodeId 变化）→ 一定居中到新焦点；
+   *   2) 布局变化把当前节点挤出了视野 → 拉回来。
+   * 其余情况（节点已在视野内）完全不动，避免镜头乱跑。
+   *
+   * 关键：等 paneWidth/paneHeight 就绪后再算，否则容器尺寸为 0 会把节点算到角落；
+   * 尺寸用「声明值」（resolveNodeSize），与布局用的是同一套数字，故居中恒准确。
+   */
+  useEffect(() => {
+    if (!session || !session.currentNodeId) return;
+    // React Flow 还没测量完容器，先不动作；尺寸就绪后本 effect 会重跑
+    if (paneWidth <= 0 || paneHeight <= 0) return;
 
-      if (currentNode) {
-        setTimeout(() => {
-          // 节点 position 是左上角坐标，需要计算中心点
-          // 节点宽度 480px，高度动态（约 200-400px），取平均值
-          const nodeWidth = 480;
-          const nodeHeight = 300; // 估算高度（header + content）
+    const currentNodeId = session.currentNodeId;
+    const currentNode = initialNodes.find(n => n.id === currentNodeId);
+    if (!currentNode) return;
 
-          // 中心点坐标
-          const centerX = currentNode.position.x + nodeWidth / 2;
-          const centerY = currentNode.position.y + nodeHeight / 2;
+    const { width, height } = resolveNodeSize(session.nodes[currentNodeId]);
+    // position 是左上角坐标，换算成中心点
+    const centerX = currentNode.position.x + width / 2;
+    const centerY = currentNode.position.y + height / 2;
 
-          // 输入框在底部，约 100px 高度，需要向上偏移视口中心
-          const viewportOffset = 60; // 将视口中心向上偏移，让节点显示在屏幕中上部
+    const focusChanged = prevCurrentNodeId.current !== currentNodeId;
+    prevCurrentNodeId.current = currentNodeId;
 
-          setCenter(centerX, centerY + viewportOffset, { zoom: 1.0, duration: 500 });
-        }, 50);
-      }
+    if (!focusChanged) {
+      // 视口可见的流坐标范围
+      const viewport = getViewport();
+      const left = -viewport.x / viewport.zoom;
+      const top = -viewport.y / viewport.zoom;
+      const right = left + paneWidth / viewport.zoom;
+      const bottom = top + paneHeight / viewport.zoom;
+      const inView =
+        centerX > left + FOLLOW_MARGIN &&
+        centerX < right - FOLLOW_MARGIN &&
+        centerY > top + FOLLOW_MARGIN &&
+        centerY < bottom - FOLLOW_MARGIN;
+      if (inView) return;
     }
-  }, [initialNodes, initialEdges, session, setCenter, setNodes, setEdges]);
+
+    // 输入框在底部，把节点略微上移，避免被输入框挡住
+    const viewportOffset = 60;
+    setCenter(centerX, centerY + viewportOffset, { zoom: getZoom() || 1, duration: 400 });
+  }, [
+    session, initialNodes, paneWidth, paneHeight,
+    setCenter, getZoom, getViewport,
+  ]);
 
   const handleFocusLatestNode = () => {
     if (!session) return;
@@ -146,11 +182,12 @@ export default function ChatCanvas() {
 
     const targetNode = nodes.find(n => n.id === targetNodeId);
     if (targetNode) {
-      const nodeWidth = 480;
-      const nodeHeight = 300;
+      const { width: nodeWidth, height: nodeHeight } = resolveNodeSize(
+        session.nodes[targetNodeId],
+      );
       const centerX = targetNode.position.x + nodeWidth / 2;
       const centerY = targetNode.position.y + nodeHeight / 2;
-      setCenter(centerX, centerY + 60, { zoom: 1.0, duration: 500 });
+      setCenter(centerX, centerY + 60, { zoom: getZoom() || 1, duration: 400 });
     }
   };
 
@@ -330,9 +367,12 @@ export default function ChatCanvas() {
           }
         }}
         connectionMode={ConnectionMode.Loose}
-        nodesDraggable={false} // 禁止节点拖拽，因为我们是用 dagre 自动布局的
+        nodesDraggable={false} // 禁止节点拖拽，因为位置由自动布局决定
         nodesConnectable={false} // 禁止手动连线
         elementsSelectable={false} // 禁止点击选中节点，避免干扰文本选择
+        // 视口剔除：只挂载视野内的节点。300 个节点里通常只有约 20 个可见，
+        // 这一项把 React 需要协调的组件数直接砍掉约 93%，是性能上最关键的一刀。
+        onlyRenderVisibleElements
         panOnScroll={true} // 允许使用鼠标滚轮平移画布
         panOnDrag={[1, 2]} // 只允许中键(1)和右键(2)拖动画布，左键用于文本选择
         selectionOnDrag={false} // 禁用框选

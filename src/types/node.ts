@@ -67,6 +67,9 @@ export interface BaseNode {
   updatedAt: number;
   collapsed?: boolean;
   marker?: NodeMarker;
+  /** 用户手动调整后的卡片尺寸（px），缺省表示按内容自适应 */
+  width?: number;
+  height?: number;
 }
 
 /**

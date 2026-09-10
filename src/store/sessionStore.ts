@@ -44,6 +44,7 @@ interface SessionState {
   focusNode: (nodeId: string) => void;
   setNodeMarker: (nodeId: string, marker: NodeMarker | undefined) => void;
   toggleNodeCollapse: (nodeId: string) => void;
+  setNodeSize: (nodeId: string, size: { width?: number; height?: number }) => void;
   updateNodeMarkers: (sessionId: string) => void;
 
   // 批量操作
@@ -537,6 +538,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               [nodeId]: {
                 ...targetNode,
                 collapsed: !targetNode.collapsed,
+                updatedAt: Date.now(),
+              },
+            },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  setNodeSize: (nodeId, size) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const node = currentSession.nodes[nodeId];
+      if (!node) return state;
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: {
+                ...node,
+                width: size.width ?? node.width,
+                height: size.height ?? node.height,
                 updatedAt: Date.now(),
               },
             },

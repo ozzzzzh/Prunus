@@ -54,6 +54,25 @@ function MessageNode({ data }: MessageNodeProps) {
   const [isSplitting, setIsSplitting] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
+
+  /**
+   * 收缩态切换时重置悬停提示，修一个「提示凭空出现」的缺陷。
+   *
+   * 成因：圆标只在收缩态存在。节点**从收缩变为展开**时圆标被卸载，而
+   * **元素卸载不会触发 onMouseLeave** —— showTooltip 会永远滞留在 true。
+   * 于是之后任何一次收缩重新渲染圆标时，提示都会凭出现（实测：展开过若干个
+   * 节点后一键收缩，这些节点的提示会一起冒出来；逐个 hover 一遍就不再复现，
+   * 因为 hover 让状态走过 true → false 把残留清掉了）。
+   *
+   * 这里用「渲染期调整 state」而不是 useEffect：React 官方推荐的随 props 重置
+   * 状态的写法，且不会触发 react-hooks/set-state-in-effect 这条 lint 规则。
+   * 参考：https://react.dev/reference/react/useState#storing-information-from-previous-renders
+   */
+  const [prevCollapsed, setPrevCollapsed] = useState(node.collapsed);
+  if (prevCollapsed !== node.collapsed) {
+    setPrevCollapsed(node.collapsed);
+    setShowTooltip(false);
+  }
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   // 临时存储编辑后的内容，用于退出编辑模式时避免闪烁
@@ -69,7 +88,6 @@ function MessageNode({ data }: MessageNodeProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const prevCollapsedRef = useRef(node.collapsed);
 
   // 是否处于编辑模式
   const isEditing = editingNodeId === node.id;
@@ -91,13 +109,10 @@ function MessageNode({ data }: MessageNodeProps) {
   // liveSize 的 ref 镜像：pointerup 时可能尚未重渲染，读 state 会拿到旧值
   const liveSizeRef = useRef<{ w: number; h: number } | null>(null);
 
-  // 从展开变成收缩时，自动显示 tooltip
-  useEffect(() => {
-    if (!prevCollapsedRef.current && node.collapsed && node.marker) {
-      setShowTooltip(true);
-    }
-    prevCollapsedRef.current = node.collapsed;
-  }, [node.collapsed, node.marker]);
+  // 注：这里原本有「从展开变成收缩时自动弹摘要 tooltip」的逻辑，已移除。
+  // 原因：一键收缩会同时折叠上百个节点，于是上百个 tooltip 同时弹出、挤成一团
+  // （且它们只在 onMouseLeave 时才消失，会一直挂着）。
+  // 现在 tooltip 只在鼠标悬停圆标时出现，见下方 onMouseEnter / onMouseLeave。
 
   // 流式内容 — 仅当前 streaming 节点订阅真实内容，其余节点返回空值避免无意义重渲染
   const generatingNodeId = useGenerationStore((state) => state.generatingNodeId);

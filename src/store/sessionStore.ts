@@ -44,6 +44,7 @@ interface SessionState {
   focusNode: (nodeId: string) => void;
   setNodeMarker: (nodeId: string, marker: NodeMarker | undefined) => void;
   toggleNodeCollapse: (nodeId: string) => void;
+  setNodesCollapsed: (nodeIds: string[], collapsed: boolean) => void;
   setNodeSize: (nodeId: string, size: { width?: number; height?: number }) => void;
   updateNodeMarkers: (sessionId: string) => void;
 
@@ -541,6 +542,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 updatedAt: Date.now(),
               },
             },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  setNodesCollapsed: (nodeIds, collapsed) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const updatedNodes = { ...currentSession.nodes };
+      let changed = false;
+
+      for (const id of nodeIds) {
+        const node = updatedNodes[id];
+        // 只有带标记的节点才有收缩态：渲染与布局都以 `collapsed && marker` 为准
+        // （见 MessageNode 与 resolveNodeSize），对无标记节点设置 collapsed 不会有任何效果
+        if (!node || !node.marker || node.collapsed === collapsed) continue;
+        updatedNodes[id] = { ...node, collapsed, updatedAt: Date.now() };
+        changed = true;
+      }
+
+      // 无实际变化就返回原 state：Zustand 按引用比较，引用不变则不会通知订阅者，
+      // 避免多余的重排与持久化（例如按钮被重复点击时）
+      if (!changed) return state;
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: updatedNodes,
             updatedAt: Date.now(),
           },
         },

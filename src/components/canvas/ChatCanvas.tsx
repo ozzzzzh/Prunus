@@ -17,7 +17,7 @@ import {
   useStore,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Focus, Sparkles, X, BookOpen } from 'lucide-react';
+import { Focus, Sparkles, X, BookOpen, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -57,6 +57,7 @@ export default function ChatCanvas() {
   const sessions = useSessionStore(state => state.sessions);
   const focusNode = useSessionStore(state => state.focusNode);
   const toggleNodeCollapse = useSessionStore(state => state.toggleNodeCollapse);
+  const setNodesCollapsed = useSessionStore(state => state.setNodesCollapsed);
   const deleteNode = useSessionStore(state => state.deleteNode);
 
   const isSelectingMode = useUIStore(state => state.isSelectingMode);
@@ -226,6 +227,46 @@ export default function ChatCanvas() {
       // 放大到 FOCUS_ZOOM，并上移一点避开浮在底部的 ChatInput
       setCenter(centerX, centerY + FOCUS_OFFSET_Y, { zoom: FOCUS_ZOOM, duration: 400 });
     }
+  };
+
+  /**
+   * 记住「本按钮上一次收缩了哪些节点」，供再次点击时**精确还原**。
+   *
+   * 语义要点：再次点击是**撤销本按钮的动作**，而不是「展开全部」——
+   * 用户自己手动折叠过的节点不该被波及，所以必须记住收缩了哪一批。
+   * 带上 sessionId 是为了切换会话后自动失效，省掉一处重置逻辑。
+   */
+  const [collapseMemory, setCollapseMemory] = useState<{ sessionId: string; ids: string[] } | null>(null);
+  const canRestoreCollapse = Boolean(
+    collapseMemory && collapseMemory.sessionId === session?.id && collapseMemory.ids.length > 0
+  );
+
+  /** 一键收缩：收缩所有当前展开的节点，当前激活节点除外 */
+  const handleToggleCollapseOthers = () => {
+    if (!session) return;
+
+    const targetNodeId = useGenerationStore.getState().generatingNodeId || session.currentNodeId;
+
+    // 第二次点击：只还原当时被本按钮收缩的那些节点
+    if (canRestoreCollapse && collapseMemory) {
+      setNodesCollapsed(collapseMemory.ids, false);
+      setCollapseMemory(null);
+      return;
+    }
+
+    // 首次点击：收缩所有当前展开的节点。只考虑带标记的节点，
+    // 因为收缩态在渲染与布局上都要求 marker（见 resolveNodeSize）。
+    const toCollapse = Object.values(session.nodes)
+      .filter(node => node.marker && !node.collapsed && node.id !== targetNodeId)
+      .map(node => node.id);
+
+    if (toCollapse.length === 0) return;
+
+    setNodesCollapsed(toCollapse, true);
+    // 激活节点保持展开；它若原本是收缩的，这里一并展开，保证它是可见的焦点
+    if (targetNodeId) setNodesCollapsed([targetNodeId], false);
+
+    setCollapseMemory({ sessionId: session.id, ids: toCollapse });
   };
 
   const handleGenerateSummary = () => {
@@ -425,13 +466,24 @@ export default function ChatCanvas() {
         <Controls className="bg-white shadow-md border-gray-200 rounded-lg overflow-hidden" showInteractive={false} />
       </ReactFlow>
       
-      <button
-        onClick={handleFocusLatestNode}
-        title="Focus on active node"
-        className="absolute bottom-32 right-8 p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 z-10 flex items-center justify-center"
-      >
-        <Focus size={20} />
-      </button>
+      {/* 右下角悬浮操作组。焦点按钮保持在原位（bottom-32），新按钮排在它上方 */}
+      <div className="absolute bottom-32 right-8 z-10 flex flex-col gap-2">
+        <button
+          onClick={handleToggleCollapseOthers}
+          title={canRestoreCollapse ? '还原上一次收缩的节点' : '收缩除当前节点外的所有节点'}
+          className="p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 flex items-center justify-center"
+        >
+          {canRestoreCollapse ? <ChevronsUpDown size={20} /> : <ChevronsDownUp size={20} />}
+        </button>
+
+        <button
+          onClick={handleFocusLatestNode}
+          title="Focus on active node"
+          className="p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 flex items-center justify-center"
+        >
+          <Focus size={20} />
+        </button>
+      </div>
 
       {/* 节点总结入口 */}
       {isSelectingMode ? (

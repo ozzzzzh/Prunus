@@ -1,10 +1,12 @@
 /**
  * 节点尺寸的统一真源
  *
- * 关键不变量：**声明尺寸 == 渲染尺寸**。
- * 卡片始终用显式的 width/height 渲染（未缩放用默认值，缩放后用持久化的值），
- * 因此布局算出来的尺寸与屏幕上实际占用的尺寸永远一致，不依赖任何 DOM 测量。
- * 这条不变量是「同层永不重叠」和「无二次落位」的根本保证。
+ * 宽度始终显式（默认 480 或用户手动缩放值）；高度默认为「内容自适应」，
+ * 由卡片按内容自然撑开，通过 ResizeObserver 实测后喂给布局。
+ *
+ * 布局用的高度必须与渲染出的高度一致，否则同层节点会重叠，
+ * 因此 resolveNodeSize 的优先级顺序是关键：
+ *   收缩态 > 用户手动高度 > DOM 实测高度 > 默认兜底
  */
 
 /** 收缩态节点（带标记）的圆标尺寸 */
@@ -13,8 +15,17 @@ export const COLLAPSED_SIZE = 56;
 /** 默认卡片宽度 */
 export const DEFAULT_WIDTH = 480;
 
-/** 未手动缩放节点的固定高度（内容超出时在卡片内部滚动） */
-export const DEFAULT_HEIGHT = 360;
+/** 实测到位前的兜底高度 */
+export const DEFAULT_HEIGHT = 240;
+
+/**
+ * 流式生成期间卡片的固定高度。
+ *
+ * 内容在增长时若卡片跟着变高，会让 ResizeObserver 连续上报、布局反复重算。
+ * 因此生成期间锁一个固定高度（内容在卡片内部滚动），结束后再回到内容自适应、
+ * 实测一次真实高度。这样既不抖动，也不会因高度失真而重叠。
+ */
+export const STREAMING_CARD_HEIGHT = 320;
 
 /** 手动缩放的边界 */
 export const MIN_WIDTH = 280;
@@ -44,18 +55,16 @@ export interface SizableNode {
 /**
  * 解析节点的布局尺寸。
  *
- * 优先级：收缩态 > 持久化的手动尺寸 > 默认值
- *
  * collapsed 必须与 marker 同时判断，才与 MessageNode 的渲染条件
  * (`node.collapsed && node.marker`) 一致；否则「标记被移除但 collapsed 仍为 true」
  * 的旧数据会渲染成卡片、却被布局按 56 计算。
  */
-export function resolveNodeSize(node: SizableNode | undefined): NodeSize {
+export function resolveNodeSize(node: SizableNode | undefined, measured?: NodeSize): NodeSize {
   if (!node) return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
   if (node.collapsed && node.marker) return { width: COLLAPSED_SIZE, height: COLLAPSED_SIZE };
   return {
     width: node.width ?? DEFAULT_WIDTH,
-    height: node.height ?? DEFAULT_HEIGHT,
+    height: node.height ?? measured?.height ?? DEFAULT_HEIGHT,
   };
 }
 

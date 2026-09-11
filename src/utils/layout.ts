@@ -32,6 +32,7 @@ export const getLayoutedElements = (
   nodes: Node[],
   edges: Edge[],
   direction = 'TB',
+  measuredSizes: Record<string, NodeSize> = {},
 ) => {
   countRender('layout'); // 临时诊断：拖动期间该值应当不增长
 
@@ -40,7 +41,8 @@ export const getLayoutedElements = (
 
   nodes.forEach((node) => {
     const data = (node.data as { node?: SizableNode } | undefined)?.node;
-    const size = resolveNodeSize(data);
+    // 高度是内容自适应的，优先用 DOM 实测值；宽度始终取声明值
+    const size = resolveNodeSize(data, measuredSizes[node.id]);
     sizeById.set(node.id, size);
     if (data) dataById.set(node.id, data);
   });

@@ -5,6 +5,7 @@ import { Focus, Sparkles, X, BookOpen } from 'lucide-react';
 
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
+import { useNodeSizeStore } from '../../store/nodeSizeStore';
 import { useUIStore } from '../../store/uiStore';
 import { isAIChatNode } from '../../types';
 import type { SummaryNodeInput } from '../../utils/summarize';
@@ -49,13 +50,17 @@ export default function ChatCanvas() {
   const prevCurrentNodeId = useRef<string | null>(null);
 
   // 影响布局的全部输入：收缩状态 + 持久化的手动尺寸。
-  // 节点尺寸不做任何 DOM 测量，所以把这两者拼成依赖即可精确覆盖重排时机。
+  // 注意高度还有第三个来源——DOM 实测（下方 measuredSizes），它是独立依赖。
   const sizeStates = useMemo(() => {
     if (!session) return '';
     return Object.values(session.nodes)
       .map(n => `${n.id}:${n.collapsed ? 1 : 0}:${n.width ?? ''}x${n.height ?? ''}`)
       .join('|');
   }, [session]);
+
+  // 节点实测尺寸（MessageNode 通过 ResizeObserver 上报）。
+  // store 内已做「无实质变化返回原引用」的守卫，因此可直接作为 memo 依赖。
+  const measuredSizes = useNodeSizeStore(state => state.sizes);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
     if (!session) return { nodes: [], edges: [] };
@@ -77,14 +82,17 @@ export default function ChatCanvas() {
       // 路径上的节点我们叫做 isPath (用于连线高亮)
       const isPath = activePath.has(node.id);
 
-      const { width, height } = resolveNodeSize(node);
+      // 必须给 React Flow 提供显式尺寸。
+      // 原因：每次布局变化都会用 setNodes 整体替换节点数组，新对象里没有 React Flow
+      // 自己的 measured 字段；而 DOM 尺寸并没变，它的 ResizeObserver 不会再次触发，
+      // 于是它永远学不回尺寸 —— 结果大量节点「尺寸未知」，连接线算不出端点而整条消失。
+      // 尺寸来源与布局完全一致（measuredSizes 就是卡片的实测高度），不存在双真源。
+      const { width, height } = resolveNodeSize(node, measuredSizes[node.id]);
 
       nodes.push({
         id: node.id,
         type: 'message',
         position: { x: 0, y: 0 }, // 由 getLayoutedElements 计算
-        // 显式声明尺寸：与卡片渲染尺寸、布局尺寸三者同源。
-        // React Flow 依赖它来做视口剔除与 fitView，无需再测量 DOM。
         width,
         height,
         data: { node, isActive: isCurrentFocus },
@@ -108,8 +116,8 @@ export default function ChatCanvas() {
       });
     });
 
-    return getLayoutedElements(nodes, edges);
-  }, [session, sizeStates]);
+    return getLayoutedElements(nodes, edges, 'TB', measuredSizes);
+  }, [session, sizeStates, measuredSizes]);
 
   // Using controlled state for React Flow to allow interactions if needed
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -141,7 +149,7 @@ export default function ChatCanvas() {
     const currentNode = initialNodes.find(n => n.id === currentNodeId);
     if (!currentNode) return;
 
-    const { width, height } = resolveNodeSize(session.nodes[currentNodeId]);
+    const { width, height } = resolveNodeSize(session.nodes[currentNodeId], measuredSizes[currentNodeId]);
     // position 是左上角坐标，换算成中心点
     const centerX = currentNode.position.x + width / 2;
     const centerY = currentNode.position.y + height / 2;
@@ -168,7 +176,7 @@ export default function ChatCanvas() {
     const viewportOffset = 60;
     setCenter(centerX, centerY + viewportOffset, { zoom: getZoom() || 1, duration: 400 });
   }, [
-    session, initialNodes, paneWidth, paneHeight,
+    session, initialNodes, measuredSizes, paneWidth, paneHeight,
     setCenter, getZoom, getViewport,
   ]);
 
@@ -184,6 +192,7 @@ export default function ChatCanvas() {
     if (targetNode) {
       const { width: nodeWidth, height: nodeHeight } = resolveNodeSize(
         session.nodes[targetNodeId],
+        measuredSizes[targetNodeId]
       );
       const centerX = targetNode.position.x + nodeWidth / 2;
       const centerY = targetNode.position.y + nodeHeight / 2;
@@ -370,9 +379,9 @@ export default function ChatCanvas() {
         nodesDraggable={false} // 禁止节点拖拽，因为位置由自动布局决定
         nodesConnectable={false} // 禁止手动连线
         elementsSelectable={false} // 禁止点击选中节点，避免干扰文本选择
-        // 视口剔除：只挂载视野内的节点。300 个节点里通常只有约 20 个可见，
-        // 这一项把 React 需要协调的组件数直接砍掉约 93%，是性能上最关键的一刀。
-        onlyRenderVisibleElements
+        // 注意：这里刻意不开 onlyRenderVisibleElements（视口剔除）。
+        // 节点高度是内容自适应的，未挂载的节点测不到高度，布局会算错并出现跳动。
+        // 「未挂载就不渲染」与「按真实内容高度布局」二者只能取其一。
         panOnScroll={true} // 允许使用鼠标滚轮平移画布
         panOnDrag={[1, 2]} // 只允许中键(1)和右键(2)拖动画布，左键用于文本选择
         selectionOnDrag={false} // 禁用框选

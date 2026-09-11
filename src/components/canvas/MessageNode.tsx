@@ -8,10 +8,11 @@ import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
+import { reportNodeSize } from '../../store/nodeSizeStore';
 import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
-import { DEFAULT_WIDTH, DEFAULT_HEIGHT, clampSize } from '../../utils/nodeSize';
+import { DEFAULT_WIDTH, STREAMING_CARD_HEIGHT, clampSize } from '../../utils/nodeSize';
 import { countRender } from '../../utils/devCounters';
 import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { splitContentLocally } from '../../utils/contentSplit';
@@ -116,6 +117,49 @@ function MessageNode({ data }: MessageNodeProps) {
   const isReasoning = useGenerationStore((state) =>
     state.generatingNodeId === node.id ? state.isReasoning : false
   );
+
+  // ===== 实测高度上报（布局需要真实高度才能算出精确层间距）=====
+  // 只在内容自适应（非固定高度）时才有意义：固定高度时尺寸不随内容变，无需测量。
+  // node.collapsed 必须在依赖里：收缩态没有卡片可观察，展开时需重新执行才能挂上。
+  //
+  // 两种情形要抑制上报，否则都会让整棵树逐帧/逐键重排：
+  //   - 编辑中：内容自适应下每敲一个字卡片高度都变
+  //   - 拖拽缩放中：卡片每帧都在变大小（实时尺寸已由 liveSize 本地承担）
+  const isEditingRef = useRef(isEditing);
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
+
+  const isResizingRef = useRef(isResizing);
+  useEffect(() => {
+    isResizingRef.current = isResizing;
+  }, [isResizing]);
+
+  useEffect(() => {
+    if (node.collapsed) return;
+    const el = cardRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      if (isEditingRef.current || isResizingRef.current) return;
+      // offsetHeight 是 border-box 的布局像素，不受画布 zoom 影响。
+      // 读 border-box 而非 content-box 是关键：否则滚动条出现/消失会造成宽度抖动。
+      // reportNodeSize 内部用 rAF 推迟到下一帧，避免在 RO 回调里同步改 store
+      // 造成「测量 → 重排 → 再测量」的同周期循环。
+      reportNodeSize(node.id, { width: el.offsetWidth, height: el.offsetHeight });
+    });
+
+    observer.observe(el, { box: 'border-box' });
+    return () => observer.disconnect();
+  }, [node.id, node.collapsed]);
+
+  // 编辑结束时补一次测量：编辑期间被抑制，而尺寸可能已经变了却不会再触发 RO
+  useEffect(() => {
+    if (isEditing || node.collapsed) return;
+    const el = cardRef.current;
+    if (!el) return;
+    reportNodeSize(node.id, { width: el.offsetWidth, height: el.offsetHeight });
+  }, [isEditing, node.id, node.collapsed]);
 
   // ===== 长按右下角标缩放 =====
   const clearArmTimer = () => {
@@ -686,11 +730,21 @@ function MessageNode({ data }: MessageNodeProps) {
     );
   }
 
-  // 卡片尺寸始终显式：未缩放用默认值，缩放后用持久化值。
-  // 这保证「声明尺寸 == 渲染尺寸」，布局与屏幕永远一致（同层不重叠的前提）。
+  // 卡片尺寸：
+  //   宽度始终显式（默认 480 或用户手动值）；
+  //   高度默认留给内容自适应，仅在「用户手动设定过」或「拖拽中」或「流式生成中」才锁死。
+  // 高度锁死时内容区改为吃满剩余空间并在内部滚动。
+  const isFixedHeight = node.height !== undefined || liveSize !== null || isStreaming;
   const cardStyle: React.CSSProperties = liveSize
     ? { width: liveSize.w, height: liveSize.h }
-    : { width: node.width ?? DEFAULT_WIDTH, height: node.height ?? DEFAULT_HEIGHT };
+    : {
+        width: node.width ?? DEFAULT_WIDTH,
+        ...(node.height !== undefined
+          ? { height: node.height }
+          : isStreaming
+            ? { height: STREAMING_CARD_HEIGHT }
+            : {}),
+      };
 
   return (
     <>
@@ -887,7 +941,12 @@ function MessageNode({ data }: MessageNodeProps) {
         {/* 主内容 */}
         <div
           ref={contentRef}
-          className="text-sm text-gray-900 leading-relaxed pr-1 custom-scrollbar flex-1 min-h-0 overflow-y-auto"
+          className={cn(
+            "text-sm text-gray-900 leading-relaxed pr-1 custom-scrollbar",
+            // 固定高度：内容吃满剩余空间并在内部滚动；
+            // 内容自适应：按内容撑开卡片高度，超过 300px 才滚动
+            isFixedHeight ? "flex-1 min-h-0 overflow-y-auto" : "overflow-y-auto max-h-[300px]"
+          )}
           onDoubleClick={handleDoubleClick}
         >
           {isEditing ? (
@@ -931,16 +990,34 @@ function MessageNode({ data }: MessageNodeProps) {
             onContextMenu={(e) => e.stopPropagation()}
             title="长按 0.3s 后拖动调整大小"
             className={cn(
-              "nodrag nopan touch-none absolute bottom-0 right-0 w-5 h-5 z-20 flex items-end justify-end pb-0.5 pr-0.5 cursor-nwse-resize transition-opacity",
-              isActive || isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              "nodrag nopan touch-none absolute bottom-0 right-0 w-5 h-5 z-20 flex items-end justify-end cursor-nwse-resize transition-opacity",
+              isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             )}
           >
-            <span
+            {/* 两道 45° 细线，与卡片边框同一视觉语言；不用实心圆以免破坏整体一致性 */}
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 11 11"
+              fill="none"
               className={cn(
-                "w-2.5 h-2.5 rounded-full border border-leaf-400 bg-white transition-colors",
-                isResizing && "bg-leaf-400 border-leaf-500 scale-125"
+                "mr-1.5 mb-1.5 transition-colors",
+                isResizing ? "text-leaf-500" : "text-gray-300 group-hover:text-gray-400"
               )}
-            />
+            >
+              <path
+                d="M10 1.5 L1.5 10"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+              />
+              <path
+                d="M10 6 L6 10"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+              />
+            </svg>
           </div>
         )}
       </div>

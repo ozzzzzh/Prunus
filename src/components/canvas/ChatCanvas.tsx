@@ -1,5 +1,21 @@
 import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
-import { ReactFlow, Background, Controls, type Node, type Edge, useNodesState, useEdgesState, ConnectionMode, useReactFlow, useStore } from '@xyflow/react';
+import {
+  ReactFlow,
+  // 刻意不使用点阵背景（xyflow 的 <Background> 或自研版本）。
+  // 实测结论：背景的代价主要是**绘制**而非重渲染 —— 每帧改变 <pattern> 的 x/y
+  // 会让整个视口大小的 <rect fill="url(#pattern)"> 重新光栅化，这个代价与是否走
+  // React 无关（自研的命令式版本同样慢）。去掉背景后拖动体感明显变好。
+  // 若要恢复，需接受这个每帧光栅化成本。
+  // Background,
+  Controls,
+  type Node,
+  type Edge,
+  useNodesState,
+  useEdgesState,
+  ConnectionMode,
+  useReactFlow,
+  useStore,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Focus, Sparkles, X, BookOpen } from 'lucide-react';
 
@@ -18,6 +34,18 @@ import { getLayoutedElements } from '../../utils/layout';
 
 /** 节点中心离视口边缘多近时认为「快看不见了」，触发智能跟随 */
 const FOLLOW_MARGIN = 80;
+
+/** 点右下角「聚焦」按钮时放大到的倍数 */
+const FOCUS_ZOOM = 1.2;
+
+/**
+ * 聚焦/跟随时把节点上移的距离（流坐标）。
+ *
+ * `ChatInput` 是 `absolute bottom-6` 浮在画布之上的（见 ChatInput.tsx），
+ * 所以画布区中心并不是「视线安全区」的中心 —— 不做偏移的话，
+ * 被聚焦的节点下半部分会被输入框盖住。
+ */
+const FOCUS_OFFSET_Y = 60;
 
 const nodeTypes = {
   message: MessageNode,
@@ -172,9 +200,8 @@ export default function ChatCanvas() {
       if (inView) return;
     }
 
-    // 输入框在底部，把节点略微上移，避免被输入框挡住
-    const viewportOffset = 60;
-    setCenter(centerX, centerY + viewportOffset, { zoom: getZoom() || 1, duration: 400 });
+    // 上移一点，避开浮在底部的 ChatInput（原因见 FOCUS_OFFSET_Y）
+    setCenter(centerX, centerY + FOCUS_OFFSET_Y, { zoom: getZoom() || 1, duration: 400 });
   }, [
     session, initialNodes, measuredSizes, paneWidth, paneHeight,
     setCenter, getZoom, getViewport,
@@ -196,7 +223,8 @@ export default function ChatCanvas() {
       );
       const centerX = targetNode.position.x + nodeWidth / 2;
       const centerY = targetNode.position.y + nodeHeight / 2;
-      setCenter(centerX, centerY + 60, { zoom: getZoom() || 1, duration: 400 });
+      // 放大到 FOCUS_ZOOM，并上移一点避开浮在底部的 ChatInput
+      setCenter(centerX, centerY + FOCUS_OFFSET_Y, { zoom: FOCUS_ZOOM, duration: 400 });
     }
   };
 
@@ -389,10 +417,11 @@ export default function ChatCanvas() {
         zoomOnDoubleClick={false} // 禁用双击缩放
         fitView
         minZoom={0.1}
+        // 必须高于 FOCUS_ZOOM，否则聚焦按钮的放大倍数会被这里钳制
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#d1d5db" gap={48} size={3} />
+        {/* 点阵背景已移除，原因见上方 import 处的注释 */}
         <Controls className="bg-white shadow-md border-gray-200 rounded-lg overflow-hidden" showInteractive={false} />
       </ReactFlow>
       

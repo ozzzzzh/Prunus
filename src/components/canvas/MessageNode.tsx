@@ -1,8 +1,6 @@
-import { Handle, Position, NodeToolbar, useReactFlow } from '@xyflow/react';
+import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
 import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
 import { isAIChatNode } from '../../types';
 import { useChatStore } from '../../store/chatStore';
@@ -19,14 +17,6 @@ import { splitContentLocally } from '../../utils/contentSplit';
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { markdownToHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
-
-const preprocessMarkdown = (text: string): string => {
-  return text
-    .replace(/"/g, '"')
-    .replace(/"/g, '"')
-    .replace(/'/g, "'")
-    .replace(/'/g, "'");
-};
 
 const MARKER_OPTIONS = [
   { emoji: '🍃', label: 'Leaf' },
@@ -86,7 +76,11 @@ function MessageNode({ data }: MessageNodeProps) {
 
   // ===== 手动缩放节点 =====
   const setNodeSize = useSessionStore((state) => state.setNodeSize);
-  const { getZoom } = useReactFlow();
+  // 用 useStoreApi 而不是 useReactFlow：前者不建立订阅。
+  // 平移画布时 store 每帧更新，若这里用 useReactFlow，300 个节点就会各自
+  // 产生一次订阅检查（它内部会 useStore(selector)）。我们只需要在事件里
+  // 临时读一下 zoom，不需要响应式订阅。
+  const store = useStoreApi();
 
   // 拖拽中的实时尺寸：只存本地 state，避免每次 pointermove 都触发全树重排
   const [liveSize, setLiveSize] = useState<{ w: number; h: number } | null>(null);
@@ -220,7 +214,8 @@ function MessageNode({ data }: MessageNodeProps) {
     if (!armedRef.current) return;
     e.stopPropagation();
 
-    const zoom = getZoom() || 1;
+    // transform 是 [x, y, zoom]
+    const zoom = store.getState().transform[2] || 1;
     const next = clampSize({
       width: dragStartRef.current.w + (e.clientX - dragStartRef.current.x) / zoom,
       height: dragStartRef.current.h + (e.clientY - dragStartRef.current.y) / zoom,
@@ -344,21 +339,12 @@ function MessageNode({ data }: MessageNodeProps) {
   // 这是整个节点最贵的操作（remark-gfm 解析 + rehype-raw 重建 HTML），
   // 不缓存的话，父组件每次重渲染都会把所有可见节点的全文重新解析一遍。
   const renderedReasoning = useMemo(
-    () =>
-      displayReasoning ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-          {preprocessMarkdown(displayReasoning)}
-        </ReactMarkdown>
-      ) : null,
+    () => (displayReasoning ? <MarkdownText>{displayReasoning}</MarkdownText> : null),
     [displayReasoning]
   );
 
   const renderedContent = useMemo(
-    () => (
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-        {preprocessMarkdown(displayContent)}
-      </ReactMarkdown>
-    ),
+    () => <MarkdownText>{displayContent}</MarkdownText>,
     [displayContent]
   );
 

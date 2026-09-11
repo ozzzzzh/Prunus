@@ -132,6 +132,51 @@ html, body, #root {
   margin-top: 0.25rem;
 }
 
+/* 表格：完整网格 + 主题色表头
+   超出节点宽度时在表格内部横向滚动（内容宽度优先，不压缩列） */
+.prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.prose thead th {
+  background-color: #eef4ec; /* leaf-100 */
+  color: #345232;            /* leaf-800 */
+  font-weight: 600;
+  white-space: nowrap;
+}
+.prose th,
+.prose td {
+  border: 1px solid #e0dcd3;
+  padding: 0.5rem 0.75rem;
+  min-width: 4.5rem;
+  vertical-align: top;
+}
+/* 尊重 GFM 对齐语法（align 属性），仅在未指定时左对齐 */
+.prose th:not([align]),
+.prose td:not([align]) {
+  text-align: left;
+}
+/* 表格内部横向滚动条：细窄暖色调，与节点风格一致 */
+.prose table::-webkit-scrollbar {
+  height: 6px;
+}
+.prose table::-webkit-scrollbar-track {
+  background: transparent;
+}
+.prose table::-webkit-scrollbar-thumb {
+  background: #d5e5d1; /* leaf-200 */
+  border-radius: 10px;
+}
+.prose table::-webkit-scrollbar-thumb:hover {
+  background: #b3cfac; /* leaf-300 */
+}
+
 /* 编辑模式下的光标和选择样式 */
 [contenteditable="true"] {
   cursor: text;
@@ -151,3 +196,25 @@ html, body, #root {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* ============================================
+   画布平移性能探针
+   ============================================ */
+
+/*
+ * 【已停用】把视口钉成稳定的合成层 —— 性能换画质，实测得不偿失。
+ *
+ * 背景：剖面显示每次 mousemove 都有 `Recalculate style`(0.7ms) + `Layerize`(0.6ms)，
+ * 提升为独立合成层后平移退化为纯重新合成，确实消除了掉帧。
+ *
+ * 但代价是文字变糊：**任何 GPU 合成层都会让 Chrome 关闭次像素抗锯齿（LCD 文字渲染）**，
+ * 降级为灰度抗锯齿。而且图层按固定比例光栅化后复用，React Flow 的 scale(zoom)
+ * 只要不是整数倍就会再糊一层。
+ *
+ * 若将来掉帧复发、且愿意接受文字变糊，取消下面注释即可恢复。
+ */
+
+/* .react-flow__viewport {
+  will-change: transform;
+} */
+

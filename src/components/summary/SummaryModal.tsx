@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { X, Copy, Check, Loader2, Sparkles, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+import MarkdownText from '../markdown/MarkdownText';
 import { summarizeNodes, type SummaryNodeInput } from '../../utils/summarize';
 import { cn } from '../../utils/cn';
 
@@ -119,9 +117,7 @@ export default function SummaryModal({ nodes, onClose }: SummaryModalProps) {
             </div>
           ) : (
             <div className="prose prose-sm max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                {result}
-              </ReactMarkdown>
+              <MarkdownText>{result}</MarkdownText>
             </div>
           )}
         </div>

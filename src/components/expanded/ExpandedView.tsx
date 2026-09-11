@@ -10,9 +10,7 @@
 import { useMemo, useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Minimize2, Loader2, Lightbulb, ChevronDown, ChevronRight } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, AIChatNode } from '../../types';
 import { isAIChatNode } from '../../types';
 import { useSessionStore } from '../../store/sessionStore';
@@ -22,13 +20,6 @@ import { cn } from '../../utils/cn';
 import { FormatSubMenu } from '../chat/FormatToolbar';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
 
-const preprocessMarkdown = (text: string): string => {
-  return text
-    .replace(/"/g, '"')
-    .replace(/"/g, '"')
-    .replace(/'/g, "'")
-    .replace(/'/g, "'");
-};
 
 export default function ExpandedView() {
   const expandedNodeId = useUIStore(state => state.expandedNodeId);
@@ -301,12 +292,7 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
               {reasoningExpanded && (
                 <div className="px-3 py-2 text-xs text-gray-600 leading-relaxed border-t border-amber-200/50">
                   <div className="prose prose-xs max-w-none">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
-                    >
-                      {preprocessMarkdown(displayReasoning || '')}
-                    </ReactMarkdown>
+                    <MarkdownText>{displayReasoning || ''}</MarkdownText>
                   </div>
                 </div>
               )}
@@ -332,12 +318,7 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
               isEditing ? "cursor-text outline-none ring-2 ring-blue-400 rounded-lg p-2 -m-2" : "cursor-default"
             )}
           >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeRaw]}
-            >
-              {preprocessMarkdown(displayContent)}
-            </ReactMarkdown>
+            <MarkdownText>{displayContent}</MarkdownText>
           </div>
         </div>
       </motion.div>

@@ -5,17 +5,11 @@
  */
 
 import { generateAIResponse } from './llmApi';
+import { htmlToPlainText } from './richtext';
 
 export interface SummaryNodeInput {
   role: string;
   content: string;
-}
-
-/**
- * 剥离 HTML 标签，减少发送给 LLM 的噪音。
- */
-function stripHtml(text: string): string {
-  return text.replace(/<[^>]*>/g, '');
 }
 
 /**
@@ -36,7 +30,7 @@ export async function summarizeNodes(
     'Use Markdown formatting with headings and bullet points where appropriate.';
 
   const nodeBlocks = nodes
-    .map((node, index) => `【节点 ${index + 1}】\n${stripHtml(node.content).trim()}`)
+    .map((node, index) => `【节点 ${index + 1}】\n${htmlToPlainText(node.content)}`)
     .join('\n\n');
 
   let userPrompt = `请对以下节点内容进行知识总结和凝练：\n\n${nodeBlocks}`;

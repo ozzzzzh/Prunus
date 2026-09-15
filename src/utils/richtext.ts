@@ -480,6 +480,56 @@ export function sanitizeHTML(html: string): string {
 }
 
 /**
+ * 把节点内容摊平成纯文本，供「发给 LLM」和「生成摘要预览」这类场景使用。
+ *
+ * 为什么需要它：节点内容有两种来源，格式并不统一 ——
+ *   - 在画布上编辑过的节点，存的是 contentEditable 的 innerHTML（见 MessageNode 保存时读 innerHTML）
+ *   - AI 生成的内容是 Markdown
+ * 同一条链路上两种格式混在一起，直接发给模型既费 token 又是纯噪音。
+ *
+ * 为什么不直接 `replace(/<[^>]*>/g, '')`：contentEditable 里按一次回车就是一个 <div>，
+ * 正则剥标签会让 `<div>第一行</div><div>第二行</div>` 粘成「第一行第二行」——
+ * 本来是为了降噪，结果把语义改掉了。所以必须先把块级边界还原成换行。
+ *
+ * 顺带解决了实体解码（&nbsp; / &amp; / &lt; ...），这是正则方案做不到的。
+ */
+export function htmlToPlainText(content: string): string {
+  // 既没有标记也没有实体，就没什么可处理的，直接返回（省掉一次 DOM 解析）。
+  //
+  // 这里必须连 '&' 一起判断：contentEditable 会把连续空格存成 &nbsp;，那种内容
+  // 一个标签都没有，只看 '<' 会漏掉，把字面量 "&nbsp;" 原样发给模型。
+  if (!content.includes('<') && !content.includes('&')) return content.trim();
+
+  // 围栏代码块原样保留：里面的 `<div>` / `<Foo>` 是代码本身而不是标记，
+  // 剥掉会改变代码语义，而代码块在 AI 的回答里很常见。
+  // 注意：非围栏部分（含行内代码）仍会被处理，这是可接受的取舍。
+  return content
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g)
+    .map((part) => (part.startsWith('```') || part.startsWith('~~~') ? part : stripTagsToText(part)))
+    .join('')
+    .trim(); // 统一在最后 trim，不能放到每段里（原因见 stripTagsToText）
+}
+
+/** htmlToPlainText 的单段实现：块级边界 → 换行，再取 textContent */
+function stripTagsToText(html: string): string {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+
+  // 块级元素前补一个换行，行内元素（b / i / span / strong ...）保持原样
+  temp
+    .querySelectorAll('div,p,br,li,ul,ol,blockquote,h1,h2,h3,h4,h5,h6,pre,table,tr,hr')
+    .forEach((el) => el.before(document.createTextNode('\n')));
+
+  return (temp.textContent ?? '')
+    // &nbsp; 解出来是 U+00A0，对模型来说就是个空格，归一成普通空格避免怪异的 token
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n') // 去掉行尾空白
+    .replace(/\n{3,}/g, '\n\n'); // 收敛多余空行
+  // 本函数刻意不 trim：每段各自 trim 会把段落和紧随其后的围栏代码块粘在一起
+  //（前一段结尾的换行被吃掉，`说明：\n\n```...```` 会变成 `说明：```...````）。
+}
+
+/**
  * 将 Markdown 转换为 HTML
  */
 export async function markdownToHtml(markdown: string): Promise<string> {

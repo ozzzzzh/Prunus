@@ -10,7 +10,7 @@ import type { AIRole } from '../../types';
 import { isAIChatNode } from '../../types';
 import { generateAIResponse, QuotaExceededError } from '../../utils/llmApi';
 import FormatToolbar, { FormatSubMenu } from './FormatToolbar';
-import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
+import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor, htmlToPlainText } from '../../utils/richtext';
 
 export default function ChatInput() {
   const [input, setInput] = useState('');
@@ -56,7 +56,14 @@ export default function ChatInput() {
       while (currId && currentSession.nodes[currId]) {
         const node = currentSession.nodes[currId];
         if (node.content && isAIChatNode(node) && node.role !== 'system') {
-          history.unshift({ role: node.role, content: node.content });
+          // 摊平成纯文本再发：画布上编辑过的节点存的是 HTML，原样发出去既费 token
+          // 又是噪音（见 richtext.ts 的 htmlToPlainText）。
+          const content = htmlToPlainText(node.content);
+          // 判空必须在摊平之后：内容全是标记的节点（例如编辑器里只剩一个空 <div>）
+          // 摊平后是空串，发过去会变成一条空的 assistant 消息，部分 API 会直接报错。
+          if (content) {
+            history.unshift({ role: node.role, content });
+          }
         }
         currId = node.parentId;
       }

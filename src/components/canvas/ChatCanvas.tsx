@@ -17,7 +17,7 @@ import {
   useStore,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Focus, Sparkles, X, BookOpen, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Focus, Sparkles, X, BookOpen, ChevronsDownUp, ChevronsUpDown, Plus } from 'lucide-react';
 
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -51,6 +51,19 @@ const nodeTypes = {
   message: MessageNode,
 };
 
+/**
+ * 右下角悬浮操作组里所有圆形按钮的公共样式。
+ *
+ * 三个按钮（新增子节点 / 收缩 / 聚焦）共用同一个字符串，不是各写一份 ——
+ * 「外观与既有按钮完全一致」这件事由此在结构上成立，而不是靠复制粘贴维持。
+ */
+const FLOATING_BTN_CLASS =
+  'p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 flex items-center justify-center';
+
+/** 仅「新增子节点」用：多选模式下该操作无意义，需要可见的禁用态 */
+const FLOATING_BTN_DISABLED_CLASS =
+  'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-white disabled:hover:text-gray-500';
+
 export default function ChatCanvas() {
   // 直接订阅 sessionStore，避免 chatStore getter 的问题
   const activeSessionId = useSessionStore(state => state.activeSessionId);
@@ -59,11 +72,13 @@ export default function ChatCanvas() {
   const toggleNodeCollapse = useSessionStore(state => state.toggleNodeCollapse);
   const setNodesCollapsed = useSessionStore(state => state.setNodesCollapsed);
   const deleteNode = useSessionStore(state => state.deleteNode);
+  const addMessage = useSessionStore(state => state.addMessage);
 
   const isSelectingMode = useUIStore(state => state.isSelectingMode);
   const selectedNodeIds = useUIStore(state => state.selectedNodeIds);
   const enterSelectingMode = useUIStore(state => state.enterSelectingMode);
   const exitSelectingMode = useUIStore(state => state.exitSelectingMode);
+  const setEditingNode = useUIStore(state => state.setEditingNode);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
 
@@ -207,6 +222,30 @@ export default function ChatCanvas() {
     session, initialNodes, measuredSizes, paneWidth, paneHeight,
     setCenter, getZoom, getViewport,
   ]);
+
+  /**
+   * 在当前激活节点下新增一个子节点，并直接进入编辑态让用户能立刻打字。
+   *
+   * 目标节点刻意只取 `currentNodeId`，不像「聚焦」那样回退到 generatingNodeId：
+   * 那个按钮的语义是「跳到正在产出内容的地方」，而本按钮是「挂到我正看着的卡片下」，
+   * 生成期间用户去点了别的节点时，两者并不重合，此时以高亮的那张卡为准才符合预期。
+   */
+  const handleAddChildNode = () => {
+    if (!session || isSelectingMode) return;
+
+    const targetNodeId = session.currentNodeId;
+    if (!targetNodeId) return;
+
+    // 复用 addMessage：它负责把新节点挂进父节点的 childrenIds、把父节点 marker
+    // 从 🍃 升级为 🪵、并把 currentNodeId 指向新节点（视口随之居中，见上方跟随 effect）。
+    // role 用 'user'：这是用户手写的节点，而 isNodeEditable 只对 user 放行编辑。
+    const newNodeId = addMessage('user', '', targetNodeId);
+    if (!newNodeId) return;
+
+    // 程序化进入编辑态。MessageNode 已把编辑器初始化挂到 isEditing 上，两条入口共用，
+    // 见 MessageNode.tsx 中「编辑态初始化 / 清理」的说明。
+    setEditingNode(newNodeId);
+  };
 
   const handleFocusLatestNode = () => {
     if (!session) return;
@@ -466,12 +505,26 @@ export default function ChatCanvas() {
         <Controls className="bg-white shadow-md border-gray-200 rounded-lg overflow-hidden" showInteractive={false} />
       </ReactFlow>
       
-      {/* 右下角悬浮操作组。焦点按钮保持在原位（bottom-32），新按钮排在它上方 */}
+      {/* 右下角悬浮操作组，自上而下：新增子节点 → 收缩 → 聚焦。
+          焦点按钮保持原位（bottom-32），新按钮一律往上排，避免既有按钮位移。 */}
       <div className="absolute bottom-32 right-8 z-10 flex flex-col gap-2">
+        <button
+          onClick={handleAddChildNode}
+          disabled={isSelectingMode}
+          title={
+            isSelectingMode
+              ? '多选模式下不可新增节点'
+              : '在当前节点下新增子节点'
+          }
+          className={cn(FLOATING_BTN_CLASS, FLOATING_BTN_DISABLED_CLASS)}
+        >
+          <Plus size={20} />
+        </button>
+
         <button
           onClick={handleToggleCollapseOthers}
           title={canRestoreCollapse ? '还原上一次收缩的节点' : '收缩除当前节点外的所有节点'}
-          className="p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 flex items-center justify-center"
+          className={FLOATING_BTN_CLASS}
         >
           {canRestoreCollapse ? <ChevronsUpDown size={20} /> : <ChevronsDownUp size={20} />}
         </button>
@@ -479,7 +532,7 @@ export default function ChatCanvas() {
         <button
           onClick={handleFocusLatestNode}
           title="Focus on active node"
-          className="p-3 bg-white text-gray-500 hover:text-leaf-600 hover:bg-gray-50 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.1)] border border-gray-200 rounded-full transition-all hover:scale-105 flex items-center justify-center"
+          className={FLOATING_BTN_CLASS}
         >
           <Focus size={20} />
         </button>

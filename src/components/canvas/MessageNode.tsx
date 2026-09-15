@@ -280,7 +280,18 @@ function MessageNode({ data }: MessageNodeProps) {
   useEffect(
     () => () => {
       const ui = useUIStore.getState();
-      if (ui.editingNodeId === node.id) {
+      if (ui.editingNodeId !== node.id) return;
+
+      // 只在节点真的从会话里消失时才清，不能无条件清。
+      //
+      // StrictMode 会在新节点挂载后立刻模拟一次「卸载 → 重新挂载」，而「新增子节点」
+      // 按钮是在节点挂载**之前**就把 editingNodeId 设好的（创建与进入编辑态在同一次
+      // 事件里），于是模拟卸载会误判成「正在编辑的节点没了」而把编辑态清掉 ——
+      // 表现就是点了按钮、节点建出来了，但编辑器不打开。双击入口不会踩到：它是挂载
+      // 之后才设的，模拟卸载那一刻 editingNodeId 还是 null。
+      const { sessions, activeSessionId } = useSessionStore.getState();
+      const session = activeSessionId ? sessions[activeSessionId] : null;
+      if (!session?.nodes[node.id]) {
         ui.setEditingNode(null);
       }
     },
@@ -577,64 +588,91 @@ function MessageNode({ data }: MessageNodeProps) {
   // 标记编辑器是否已完成初始化
   const isInitializedRef = useRef(false);
 
-  // 进入编辑模式
+  // 进入编辑模式。这里只负责切换 editingNodeId —— 编辑器内容的初始化统一交给
+  // 下面那个 effect，好让「双击」和「新增子节点」按钮的程序化进入共用同一条路径。
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     if (isSelectingMode) return;
     if (!isStreaming) {
-      // 重置所有标记
-      isSavingRef.current = false;
-      // 记录编辑前的内容
-      originalContentRef.current = node.content;
-      // 重置初始化标记
-      isInitializedRef.current = false;
-      // 直接设置编辑器内容（同步，不依赖 useEffect）
-      const isHtml = node.content.includes('<') && node.content.includes('>');
-      if (isHtml) {
-        setEditorContent(node.content);
-        isInitializedRef.current = true;
-      } else {
-        // 如果不是 HTML，异步转换
-        markdownToHtml(node.content).then((html) => {
-          // 只有当仍然处于编辑模式时才设置内容
-          if (useUIStore.getState().editingNodeId === node.id) {
-            setEditorContent(html);
-            isInitializedRef.current = true;
-          }
-        });
-      }
       setEditingNode(node.id);
     }
   };
 
-  // 当退出编辑模式时，清空编辑器内容状态
+  /**
+   * 编辑态初始化 / 清理。
+   *
+   * 为什么不能把初始化留在 handleDoubleClick 里：进入编辑态有两个入口 ——
+   *   1) 双击卡片（handleDoubleClick）
+   *   2) 画布右下角「新增子节点」，它直接改 editingNodeId，完全不经过本组件的 handler
+   * 初始化若只挂在入口 1 上，入口 2 进来时 isInitializedRef 会一直是 false，
+   * 而 handleEditBlur 见到未初始化就直接放弃保存 —— 用户敲进去的字会被静默丢弃。
+   * 所以把初始化挂到两条入口共有的信号 isEditing 上。
+   */
   useEffect(() => {
     if (!isEditing) {
+      // 退出编辑态：清空编辑器内容状态
       setEditorContent('');
       isInitializedRef.current = false;
+      return;
     }
-  }, [isEditing]);
+    // 已经初始化过（同一节点本次编辑内），不重复做
+    if (isInitializedRef.current) return;
 
-  // 当编辑器内容设置完成后，聚焦并将光标移动到末尾
-  useEffect(() => {
-    if (isEditing && editorContent && editRef.current) {
-      // 使用 setTimeout 确保 DOM 更新完成
-      setTimeout(() => {
-        if (editRef.current && isEditing) {
-          editRef.current.focus();
-          // 将光标移动到末尾
-          const range = document.createRange();
-          const selection = window.getSelection();
-          if (selection && editRef.current.childNodes.length > 0) {
-            range.selectNodeContents(editRef.current);
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-        }
-      }, 0);
+    // 重置所有标记
+    isSavingRef.current = false;
+    // 记录编辑前的内容
+    originalContentRef.current = node.content;
+
+    // 新建的空节点没有内容可转换。这里必须提前返回、不能落到下面的异步分支：
+    // setEditorContent('') 与当前值相同，React 会跳过重渲染，依赖 editorContent 的
+    // 聚焦 effect 就不再触发，编辑器拿不到焦点 —— 而「自动进入编辑态」正是本功能的重点。
+    if (node.content === '') {
+      isInitializedRef.current = true;
+      return;
     }
+
+    // 直接设置编辑器内容（同步）
+    const isHtml = node.content.includes('<') && node.content.includes('>');
+    if (isHtml) {
+      setEditorContent(node.content);
+      isInitializedRef.current = true;
+    } else {
+      // 如果不是 HTML，异步转换
+      markdownToHtml(node.content).then((html) => {
+        // 只有当仍然处于编辑模式时才设置内容
+        if (useUIStore.getState().editingNodeId === node.id) {
+          setEditorContent(html);
+          isInitializedRef.current = true;
+        }
+      });
+    }
+  }, [isEditing, node.id, node.content]);
+
+  // 当编辑器内容设置完成后，聚焦并将光标移动到末尾。
+  //
+  // 判据是 isInitializedRef 而不是 editorContent 非空：新建的空节点内容就是空串，
+  // 若按「内容非空」判断，它会永远等不到聚焦 —— 而自动聚焦恰恰是「新增子节点」的重点。
+  // 异步转换的那一支（markdown → HTML）在初始化完成时会改 editorContent，本 effect
+  // 随之重跑，聚焦时机不变。
+  useEffect(() => {
+    if (!isEditing || !editRef.current) return;
+    if (!isInitializedRef.current) return;
+    // 使用 setTimeout 确保 DOM 更新完成
+    setTimeout(() => {
+      if (editRef.current && isEditing) {
+        editRef.current.focus();
+        // 将光标移动到末尾
+        const range = document.createRange();
+        const selection = window.getSelection();
+        if (selection && editRef.current.childNodes.length > 0) {
+          range.selectNodeContents(editRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+    }, 0);
   }, [isEditing, editorContent]);
 
   // 退出编辑模式并保存内容

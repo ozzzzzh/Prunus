@@ -13,7 +13,8 @@ Prunus 是一个树状对话管理器。与线性聊天不同，你可以从任�
 
 [Prunus](http://124.221.46.61/)
 
-![Prunus 画布全貌](/Prunus/src/assets/screenshot-canvas.png)
+<img width="2552" height="1354" alt="screenshot-canvas" src="https://github.com/user-attachments/assets/d78198b0-1904-478d-905a-8a4c7a50ff07" />
+
 
 ---
 
@@ -39,7 +40,7 @@ AI 卡片上的按钮，把整条回复拆成一个大纲节点加若干子节�
 
 它靠识别标题和编号列表来切分，因此只对排版规整的回复有效；识别不出来时会回退到一次 LLM 调用。排版合适时很省事，不合适时不如手动摘取可控。
 
-![Prunus 画布全貌](/Prunus/src/assets/branchOut.png)
+<img width="2552" height="1354" alt="branchOut" src="https://github.com/user-attachments/assets/f3ebec9a-0d21-4caf-98ab-1c7da6ba98cb" />
 
 ### 画布与聚焦
 
@@ -50,7 +51,8 @@ AI 卡片上的按钮，把整条回复拆成一个大纲节点加若干子节�
 
 多选若干节点，交由 LLM 凝练成一份结构化总结，适合在一轮发散之后回收结论。
 
-![Prunus 画布全貌](/Prunus/src/assets/Summary.png)
+<img width="2552" height="1354" alt="Summary" src="https://github.com/user-attachments/assets/62938ab4-b5a3-4eab-a2cd-e4eaca1ff80e" />
+
 
 ### 会话背景
 
@@ -59,7 +61,7 @@ AI 卡片上的按钮，把整条回复拆成一个大纲节点加若干子节�
 ### 链路编辑
 
 从根到当前叶子节点的单链路视图，适合顺序阅读和连续编辑一整条思路。
-![Prunus 画布全貌](/Prunus/src/assets/Linear.png)
+<img width="2552" height="1354" alt="Linear" src="https://github.com/user-attachments/assets/d8e36601-568c-49ef-b35b-ddbaacaaf824" />
 
 ---
 

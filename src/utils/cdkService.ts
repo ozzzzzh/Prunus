@@ -1,11 +1,31 @@
 /**
  * 社区版 CDK 兑换与额度查询服务
  *
- * COMMUNITY_API 由构建时注入（.env 的 COMMUNITY_API）。
+ * COMMUNITY_API 由构建时注入（vite.config.ts 读取 .env 的 COMMUNITY_API）。
  * 为空表示纯开源自托管模式（无 CDK）。
+ *
+ * 支持三种写法：
+ *   https://api.example.com  绝对地址，跨域，需要在后端配 CORS_ORIGIN
+ *   /                        相对地址，与前端同源（推荐）
+ *   /prunus                  挂在同源子路径下
+ *
+ * 「/」开头时在**运行时**才解析成绝对地址，因此同一份构建产物既能跑在
+ * IP 上也能跑在域名上，换域名不需要重新构建。
  */
 
-const COMMUNITY_API = (((import.meta as any).env?.VITE_COMMUNITY_API as string) || '').replace(/\/+$/, '');
+const RAW_COMMUNITY_API = (((import.meta as any).env?.VITE_COMMUNITY_API as string) || '').trim();
+
+function resolveCommunityApi(raw: string): string {
+  if (!raw) return '';
+  // 以 "/" 开头 = 同源，跟随当前站点的协议/主机/端口
+  if (raw.startsWith('/')) {
+    if (typeof window === 'undefined') return '';
+    return window.location.origin + raw.replace(/\/+$/, '');
+  }
+  return raw.replace(/\/+$/, '');
+}
+
+const COMMUNITY_API = resolveCommunityApi(RAW_COMMUNITY_API);
 
 export interface RedeemResult {
   token: string;

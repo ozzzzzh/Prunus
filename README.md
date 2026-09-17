@@ -20,11 +20,11 @@ Prunus 是一个树状对话管理器。与线性聊天不同，你可以从任�
 
 ## 核心特性
 
-### 分支与上下文隔离
+- ### 分支与上下文隔离
 
 从任意节点发散出多个分支，平行探索不同方向。每次请求只携带**当前节点向上回溯到根的那一条祖先链**，不包含任何兄弟分支——这是它与线性聊天最本质的差别，也是多分支下上下文不混乱的原因。
 
-### 创建分支
+- ### 创建分支
 
 有两种方式，按需要选：
 
@@ -42,23 +42,27 @@ AI 卡片上的按钮，把整条回复拆成一个大纲节点加若干子节�
 
 <img width="2552" height="1354" alt="branchOut" src="https://github.com/user-attachments/assets/f3ebec9a-0d21-4caf-98ab-1c7da6ba98cb" />
 
-### 画布与聚焦
+- ### 画布与聚焦
 
-节点由 dagre 自动布局，连接线标示当前激活链路。一键聚焦可随时定位到正在生成的节点或当前激活节点，画布再大也不会迷路。可以对节点进行编辑,也随时摊平回线性
+节点由 dagre 自动布局，连接线标示当前激活链路。一键聚焦可随时定位到正在生成的节点或当前激活节点，画布再大也不会迷路，可以对节点进行编辑。
 
+<img width="2554" height="1358" alt="image" src="https://github.com/user-attachments/assets/a20ab8e4-463e-4dda-8e20-419a1a1dbf19" />
 
-### 节点总结
+- ### 节点总结
 
 多选若干节点，交由 LLM 凝练成一份结构化总结，适合在一轮发散之后回收结论。
 
 <img width="2552" height="1354" alt="Summary" src="https://github.com/user-attachments/assets/62938ab4-b5a3-4eab-a2cd-e4eaca1ff80e" />
 
 
-### 会话背景
+- ### 会话背景
 
 为单个会话设定一段全局约束（角色、风格、前提），它会附加在每次请求的 system prompt 后面。
 
-### 链路编辑
+<img width="2552" height="1354" alt="image" src="https://github.com/user-attachments/assets/95061c7f-a4da-44ce-b1f3-379c16a0430d" />
+
+
+- ### 链路编辑
 
 从根到当前叶子节点的单链路视图，适合顺序阅读和连续编辑一整条思路。
 <img width="2552" height="1354" alt="Linear" src="https://github.com/user-attachments/assets/d8e36601-568c-49ef-b35b-ddbaacaaf824" />

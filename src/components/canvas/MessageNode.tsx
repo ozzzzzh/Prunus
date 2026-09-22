@@ -1,8 +1,8 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
-import { isAIChatNode } from '../../types';
+import { isAIChatNode, getNodeAttachment } from '../../types';
 import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -323,6 +323,10 @@ function MessageNode({ data }: MessageNodeProps) {
     contentEl.addEventListener('wheel', handleWheelCapture, { capture: true });
     return () => contentEl.removeEventListener('wheel', handleWheelCapture, { capture: true });
   }, [node.collapsed]);
+
+  // 附件存在 metadata 里（见 types/node.ts）。守卫会挡住脏数据，取不到就是 null。
+  // 只是几次 typeof 检查，不必 memo。
+  const nodeAttachment = getNodeAttachment(node);
 
   const isAIChat = isAIChatNode(node);
   const role = isAIChat ? node.role : null;
@@ -941,6 +945,26 @@ function MessageNode({ data }: MessageNodeProps) {
             )}
           </div>
         </div>
+
+        {/*
+          附件标签：让用户一眼看出**哪个节点**带了文档。
+          没有这个的话，附件在画布上完全不可见，用户会困惑"我传的文档去哪了"。
+          只显示名字与字数，正文不渲染 —— 整篇文档铺在卡片上会毁掉可读性。
+        */}
+        {nodeAttachment && !isEditing && (
+          <div className="mb-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-leaf-50 border border-leaf-100 text-[11px] text-leaf-700 shrink-0">
+            <Paperclip size={11} className="flex-shrink-0" />
+            <span className="truncate max-w-[220px]" title={nodeAttachment.name}>
+              {nodeAttachment.name}
+            </span>
+            <span className="text-leaf-500 flex-shrink-0">
+              {nodeAttachment.totalChars.toLocaleString()} 字
+            </span>
+            {nodeAttachment.truncated && (
+              <span className="text-amber-700 bg-amber-100 px-1 rounded flex-shrink-0">已截断</span>
+            )}
+          </div>
+        )}
 
         {/* Reasoning 内容 - 思考过程 */}
         {displayReasoning && displayReasoning.length > 0 && !isEditing && (

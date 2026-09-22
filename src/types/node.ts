@@ -246,3 +246,61 @@ export function getNodeIcon(node: PrunusNode): string {
       return '📄';
   }
 }
+
+// ===== 上传文档的附件 =====
+
+/** 可解析的文档类型 */
+export type DocKind = 'text' | 'docx' | 'pdf';
+
+/**
+ * 附件：上传文档在浏览器端解析出的纯文本。
+ *
+ * 存放在 `BaseNode.metadata.attachment` 上，因此**不需要给节点加新字段** ——
+ * `metadata` 本来就是预留的扩展位，此前全项目只写 `{}` 从不读取。
+ */
+export interface NodeAttachment {
+  name: string;
+  kind: DocKind;
+  /** 原始文件字节数 */
+  size: number;
+  /** 截断前的字符数 */
+  totalChars: number;
+  truncated: boolean;
+  /** 解析出的正文（可能已截断） */
+  text: string;
+}
+
+export const ATTACHMENT_KEY = 'attachment';
+
+/**
+ * 从节点 metadata 里安全地取出附件。
+ *
+ * 必须逐字段守卫、不能用 as 断言：metadata 的类型是 Record<string, unknown>，
+ * 而且内容可能来自**导入的 JSON 文件**（用户从外部拿来的）。一份脏数据
+ * 只应该让这个节点显示不出附件，不该让整棵节点树渲染崩掉。
+ */
+export function getNodeAttachment(node: PrunusNode): NodeAttachment | null {
+  const raw = node.metadata?.[ATTACHMENT_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+
+  const a = raw as Record<string, unknown>;
+  if (
+    typeof a.name !== 'string' ||
+    (a.kind !== 'text' && a.kind !== 'docx' && a.kind !== 'pdf') ||
+    typeof a.text !== 'string' ||
+    typeof a.totalChars !== 'number' ||
+    typeof a.truncated !== 'boolean'
+  ) {
+    return null;
+  }
+
+  return {
+    name: a.name,
+    kind: a.kind,
+    // size 不是关键字段，缺失时补 0 即可，不必因此丢掉整个附件
+    size: typeof a.size === 'number' ? a.size : 0,
+    totalChars: a.totalChars,
+    truncated: a.truncated,
+    text: a.text,
+  };
+}

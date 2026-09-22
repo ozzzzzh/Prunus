@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, CornerDownLeft, Loader2, MessageSquare } from 'lucide-react';
+import { Send, CornerDownLeft, Loader2, MessageSquare, Paperclip, X } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useAPIConfigStore } from '../../store/apiConfigStore';
-import type { AIRole } from '../../types';
-import { isAIChatNode } from '../../types';
+import { useDialogStore } from '../../store/dialogStore';
+import type { AIRole, NodeAttachment } from '../../types';
+import { isAIChatNode, getNodeAttachment } from '../../types';
 import { generateAIResponse, QuotaExceededError } from '../../utils/llmApi';
+import { parseDocument, estimateTokens, LARGE_DOC_TOKENS } from '../../utils/documentParser';
 import FormatToolbar, { FormatSubMenu } from './FormatToolbar';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor, htmlToPlainText } from '../../utils/richtext';
 
@@ -25,18 +27,70 @@ export default function ChatInput() {
   const expandedNodeId = useUIStore(state => state.expandedNodeId);
   const setExpandedNode = useUIStore(state => state.setExpandedNode);
   const focusNode = useSessionStore(state => state.focusNode);
+  const setNodeAttachment = useSessionStore(state => state.setNodeAttachment);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
   const activeNode = session && session.currentNodeId ? session.nodes[session.currentNodeId] : null;
 
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!input.trim() || !activeSessionId || isLoading) return;
+  // ===== 上传文档 =====
+  // 附件先挂在这里，等发送时节点建出来了再写进那个节点的 metadata ——
+  // 这之前还没有属于本次消息的节点可挂。
+  const [attachment, setAttachment] = useState<NodeAttachment | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const attachmentTokens = attachment ? estimateTokens(attachment.text) : 0;
+
+  const handlePickFile = () => fileInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // 先复位，否则连续选同一个文件不会再触发 change
+    e.target.value = '';
+    if (!file) return;
+
+    setIsParsing(true);
+    try {
+      const parsed = await parseDocument(file);
+      setAttachment({
+        name: parsed.name,
+        kind: parsed.kind,
+        size: parsed.size,
+        totalChars: parsed.totalChars,
+        truncated: parsed.truncated,
+        text: parsed.text,
+      });
+      const notes = [`已读取「${parsed.name}」`, `${parsed.totalChars.toLocaleString()} 字`];
+      if (parsed.pages) notes.push(`${parsed.pages} 页`);
+      if (parsed.truncated) notes.push(`内容过长，已截断至 ${parsed.text.length.toLocaleString()} 字`);
+      useDialogStore.getState().showToast(notes.join(' · '), {
+        type: parsed.truncated ? 'info' : 'success',
+      });
+    } catch (err) {
+      // documentParser 抛出的都是可读的中文提示，直接透出
+      useDialogStore.getState().showToast((err as Error).message || '文件解析失败', { type: 'error' });
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  /** 真正的发送逻辑；由 handleSubmit 在通过护栏（含大附件确认）之后调用 */
+  const runSubmit = async () => {
+    if (!activeSessionId) return;
 
     const messageContent = input.trim();
+    const pending = attachment;
     setInput('');
+    setAttachment(null);
 
     const userNodeId = addMessage('user', messageContent);
+
+    // 附件写进刚建出来的这个用户节点。刻意不塞进 content ——
+    // content 保持是用户手打的那句话，附件走 metadata，卡片上才显示得干净。
+    if (pending) {
+      setNodeAttachment(userNodeId, pending);
+    }
+
     setIsLoading(true);
     setGeneratingNodeId(userNodeId);
 
@@ -54,14 +108,26 @@ export default function ChatInput() {
 
       while (currId && currentSession.nodes[currId]) {
         const node = currentSession.nodes[currId];
-        if (node.content && isAIChatNode(node) && node.role !== 'system') {
+        if (isAIChatNode(node) && node.role !== 'system') {
           // 摊平成纯文本再发：画布上编辑过的节点存的是 HTML，原样发出去既费 token
           // 又是噪音（见 richtext.ts 的 htmlToPlainText）。
           const content = htmlToPlainText(node.content);
+
+          // 附件要沿**整条祖先链**注入，而不是只注入带附件的那一个节点：
+          // 大模型调用是无状态的，只注入当前节点的话用户追问时模型就"忘了"文档，
+          // 功能会显得是坏的。代价是后续每条消息都重发整篇文档、重复计费 ——
+          // 这正是 handleSubmit 里要做额度确认的原因。
+          const att = getNodeAttachment(node);
+          const parts: string[] = [];
+          if (att) {
+            parts.push(`<document name="${att.name}">\n${att.text}\n</document>`);
+          }
+          if (content) parts.push(content);
+
           // 判空必须在摊平之后：内容全是标记的节点（例如编辑器里只剩一个空 <div>）
           // 摊平后是空串，发过去会变成一条空的 assistant 消息，部分 API 会直接报错。
-          if (content) {
-            history.unshift({ role: node.role, content });
+          if (parts.length) {
+            history.unshift({ role: node.role, content: parts.join('\n\n') });
           }
         }
         currId = node.parentId;
@@ -134,6 +200,29 @@ export default function ChatInput() {
     }
   };
 
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    // 允许「只传文档不提问」：那是最常见的用法（"总结这份文档"），
+    // 所以附件也算有效内容。解析中则一律拦住，避免把半个文件发出去。
+    if ((!input.trim() && !attachment) || !activeSessionId || isLoading || isParsing) return;
+
+    // 附件会让本分支的**后续每条消息**都重发整篇文档、重复计费（大模型调用无状态）。
+    // 这里是额度最容易被意外耗光的地方，所以超过阈值时先确认，而不是默默扣掉。
+    if (attachmentTokens >= LARGE_DOC_TOKENS) {
+      useDialogStore.getState().showConfirm({
+        title: '这条消息会消耗较多额度',
+        message:
+          `附件「${attachment?.name}」约 ${attachmentTokens.toLocaleString()} tokens。` +
+          `发送之后，本分支的后续每条消息都会重新计入这部分内容。确定继续吗？`,
+        confirmText: '仍然发送',
+        onConfirm: () => { void runSubmit(); },
+      });
+      return;
+    }
+
+    void runSubmit();
+  };
+
   // 编辑模式下，自动检测选区格式
   const [autoOpenMenu, setAutoOpenMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
 
@@ -201,6 +290,45 @@ export default function ChatInput() {
           </div>
         ) : null}
 
+        {/* 附件标签：让用户看到读到了多少内容、大概花多少额度 */}
+        {!isEditing && attachment && (
+          <div className="bg-leaf-50 px-4 py-2 text-xs border-b border-leaf-100 flex items-center gap-2">
+            <Paperclip size={12} className="text-leaf-600 flex-shrink-0" />
+            <span className="text-leaf-800 truncate max-w-[200px]" title={attachment.name}>
+              {attachment.name}
+            </span>
+            <span className="text-leaf-600 flex-shrink-0">
+              {attachment.totalChars.toLocaleString()} 字
+            </span>
+            {attachment.truncated && (
+              <span className="text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                已截断
+              </span>
+            )}
+            {/*
+              超过阈值时变色提醒。这是额度最容易被意外耗光的地方 ——
+              附件会随本分支的每条后续消息重复计入。
+            */}
+            <span
+              className={
+                attachmentTokens >= LARGE_DOC_TOKENS
+                  ? 'flex-shrink-0 text-amber-700 font-medium'
+                  : 'flex-shrink-0 text-leaf-600'
+              }
+            >
+              约 {attachmentTokens.toLocaleString()} tokens
+            </span>
+            <button
+              type="button"
+              onClick={() => setAttachment(null)}
+              title="移除附件"
+              className="ml-auto flex-shrink-0 text-leaf-500 hover:text-red-500 transition-colors"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="p-2 flex items-end gap-2">
           {/* 工具栏主按钮 - 在对话框左边 */}
           <FormatToolbar
@@ -229,6 +357,25 @@ export default function ChatInput() {
           {/* 正常模式：输入框和发送按钮 */}
           {!isEditing && (
             <>
+              {/* 上传文档作为上下文 */}
+              <button
+                type="button"
+                onClick={handlePickFile}
+                disabled={isParsing}
+                title="上传文档作为上下文（支持 .txt / .md / .csv / .json / .docx / .pdf）"
+                className="p-3 text-gray-400 hover:text-leaf-600 hover:bg-leaf-50 disabled:cursor-wait disabled:text-gray-300 rounded-xl transition-colors flex-shrink-0"
+              >
+                {isParsing ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.markdown,.csv,.json,.log,.docx,.pdf"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}

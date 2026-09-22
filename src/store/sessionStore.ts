@@ -5,7 +5,8 @@
  */
 
 import { create } from 'zustand';
-import type { PrunusNode, AIChatNode, NodeMarker } from '../types';
+import type { PrunusNode, AIChatNode, NodeMarker, NodeAttachment } from '../types';
+import { ATTACHMENT_KEY } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
 
 // ===== 类型定义 =====
@@ -46,6 +47,8 @@ interface SessionState {
   toggleNodeCollapse: (nodeId: string) => void;
   setNodesCollapsed: (nodeIds: string[], collapsed: boolean) => void;
   setNodeSize: (nodeId: string, size: { width?: number; height?: number }) => void;
+  /** 设置或清除节点的附件（存进 metadata，不占用单独的节点字段） */
+  setNodeAttachment: (nodeId: string, attachment: NodeAttachment | null) => void;
   updateNodeMarkers: (sessionId: string) => void;
 
   // 批量操作
@@ -609,6 +612,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 height: size.height ?? node.height,
                 updatedAt: Date.now(),
               },
+            },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  setNodeAttachment: (nodeId, attachment) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const node = currentSession.nodes[nodeId];
+      if (!node) return state;
+
+      const metadata = { ...node.metadata };
+      if (attachment) {
+        metadata[ATTACHMENT_KEY] = attachment;
+      } else {
+        // 清除时把键删掉而不是置 null —— getNodeAttachment 靠「键不存在」判断无附件，
+        // 留一个 null 会让 metadata 里堆积无用字段，也会随导出文件一起带出去
+        delete metadata[ATTACHMENT_KEY];
+      }
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: { ...node, metadata, updatedAt: Date.now() },
             },
             updatedAt: Date.now(),
           },

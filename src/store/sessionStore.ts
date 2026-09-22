@@ -50,6 +50,7 @@ interface SessionState {
 
   // 批量操作
   importSessions: (sessions: Record<string, ChatSession>) => void;
+  mergeSessions: (incoming: Record<string, ChatSession>) => void;
   exportSessions: () => Record<string, ChatSession>;
 
   // 加载示例数据
@@ -659,6 +660,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   importSessions: (sessions) => {
     set({ sessions, activeSessionId: Object.keys(sessions)[0] || null });
+  },
+
+  /**
+   * 追加会话（导入对话用）。
+   *
+   * 与 importSessions 的区别，也是不能复用它做导入的原因：
+   *   1. 它是**整体替换**，会把本机已有的会话全冲掉；
+   *   2. 它会把 activeSessionId 重置成第一个键 —— 导入是安静的追加操作，
+   *      不该把用户正在看的会话切走。
+   * 同 id 的项仍会被覆盖，但调用方（sessionTransfer.resolveImport）已经保证
+   * 传进来的 id 不与本机冲突。
+   */
+  mergeSessions: (incoming) => {
+    set((state) => ({
+      sessions: { ...state.sessions, ...incoming },
+    }));
   },
 
   exportSessions: () => {

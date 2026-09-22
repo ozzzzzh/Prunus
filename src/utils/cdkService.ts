@@ -73,6 +73,40 @@ export async function redeemCdk(code: string): Promise<RedeemResult> {
   return res.json();
 }
 
+export interface FreeTokenResult {
+  token: string;
+  quota: number;
+  used_quota: number;
+  remaining: number;
+}
+
+/**
+ * 领取免费试用额度。
+ *
+ * 身份由后端用 Cookie 维持：同一浏览器重复调用会拿回**同一个 token**，
+ * 所以刷新页面不会重置额度。清掉 Cookie 会得到新身份和新额度（这个口子当前是开着的）。
+ *
+ * 与 CDK 兑换出来的 token 在数据上完全一样——记账、扣减、402 判定走的都是同一套，
+ * 所以拿到后直接交给 `configureCdk` 即可，请求链路一行都不用改。
+ *
+ * 不传 credentials：默认的 `same-origin` 已经会带上 Cookie，而部署形态本就要求
+ * 前端与后端同源（生产用 Nginx 同域反代，开发用 Vite 的 /api 代理）。
+ */
+export async function requestFreeToken(): Promise<FreeTokenResult> {
+  const res = await fetch(`${COMMUNITY_API}/api/anon`, { method: 'POST' });
+  if (!res.ok) {
+    let msg = `领取免费额度失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      msg = j.error || msg;
+    } catch {
+      // 忽略非 JSON 错误体
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 /** 查询某个 token 的额度 */
 export async function fetchQuota(token: string): Promise<QuotaInfo> {
   const res = await fetch(`${COMMUNITY_API}/api/me`, {

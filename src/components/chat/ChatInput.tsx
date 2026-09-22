@@ -5,7 +5,6 @@ import { useGenerationStore } from '../../store/generationStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useAPIConfigStore } from '../../store/apiConfigStore';
-import { useDialogStore } from '../../store/dialogStore';
 import type { AIRole } from '../../types';
 import { isAIChatNode } from '../../types';
 import { generateAIResponse, QuotaExceededError } from '../../utils/llmApi';
@@ -114,8 +113,18 @@ export default function ChatInput() {
     } catch (error: unknown) {
       const err = error as Error;
       if (err instanceof QuotaExceededError) {
-        useDialogStore.getState().showToast('额度已用完，请在设置中兑换新的兑换码', { type: 'error' });
-        useUIStore.getState().toggleSettings(true);
+        // 社区后端（含免费试用与兑换码）额度耗尽 → 弹回配置页。
+        // 清掉本地配置后，App 的配置闸门会重新接管：它会再领一次免费额度，后端把同一个
+        // 已耗尽的 token 还回来，于是停在配置页并带上「额度已用完」的说明。
+        // 用户数据在 IndexedDB，与这份 API 配置相互独立，所以清掉它不会丢对话树。
+        //
+        // 只在 cdk 模式下这么做：BYOK 是直连用户自己的 provider，那边返回 402 是对方账号
+        // 的问题，不该顺手清掉用户填好的配置。
+        if (useAPIConfigStore.getState().config.mode === 'cdk') {
+          useAPIConfigStore.getState().resetConfig();
+        } else {
+          useChatStore.getState().addMessage('system', `Error: ${err.message}`, userNodeId);
+        }
       } else {
         useChatStore.getState().addMessage('system', `Error: ${err.message || 'Failed to connect to AI API'}`, userNodeId);
       }

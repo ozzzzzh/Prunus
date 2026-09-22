@@ -48,6 +48,23 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        // 社区后端代理
+        // ⚠ 必须写在 '/api/tencent' 和 '/api/llm' 之后。
+        //   Vite 按对象键的书写顺序匹配前缀，'/api/' 会把上面两个更具体的
+        //   前缀一起吃掉，导致腾讯云 / LLM 代理失效。
+        // 配合 .env.local 的 COMMUNITY_API=/ ：前端请求
+        // http://localhost:5173/api/redeem，由这里转发到本机后端，
+        // 同源、不需要 CORS。
+        // 目标端口与后端 .env 的 PORT 保持一致。
+        '/api/': {
+          target: 'http://127.0.0.1:3000',
+          changeOrigin: true,
+        },
+        // OpenAI 兼容代理（流式对话）
+        '/v1/': {
+          target: 'http://127.0.0.1:3000',
+          changeOrigin: true,
+        },
       },
     },
     define: {

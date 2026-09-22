@@ -4,7 +4,7 @@
  * 全屏文件管理界面，支持网格/列表视图、文件夹导航、置顶
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, type ChangeEvent } from 'react';
 import {
   ArrowLeft,
   Folder,
@@ -19,12 +19,14 @@ import {
   ChevronRight,
   Home,
   Pin,
+  Upload,
 } from 'lucide-react';
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
+import { parseSessionFile, resolveImport } from '../../utils/sessionTransfer';
 import type { FolderItem } from '../../types';
 import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
@@ -203,6 +205,42 @@ export default function FileManagerPage() {
     }
   };
 
+  // 导入对话：把导出的 JSON 还原成本机的会话
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // 先把 value 复位：否则连续选同一个文件不会再触发 change
+    e.target.value = '';
+    if (!file) return;
+
+    try {
+      const parsed = parseSessionFile(await file.text());
+      const { sessions, renamed } = resolveImport(
+        parsed.sessions,
+        useSessionStore.getState().sessions
+      );
+
+      // 追加合并：已有的一律保留，冲突的已由 resolveImport 改成副本
+      useSessionStore.getState().mergeSessions(sessions);
+
+      // 关键一步：光写 sessionStore 不够。侧边栏与文件管理页都是由 folderStore 的
+      // FolderItem 树驱动的，必须再为每个导入的会话补一个 FolderItem，否则「导入了但看不见」。
+      for (const session of Object.values(sessions)) {
+        createSessionItem(currentFolderId, session.id, session.title);
+      }
+
+      const notes = [`已导入 ${Object.keys(sessions).length} 个对话`];
+      if (renamed > 0) notes.push(`其中 ${renamed} 个重名，已作为副本导入`);
+      if (parsed.skipped > 0) notes.push(`另有 ${parsed.skipped} 条格式不正确已跳过`);
+      useDialogStore.getState().showToast(notes.join('；'), {
+        type: parsed.skipped > 0 ? 'info' : 'success',
+      });
+    } catch (err) {
+      useDialogStore.getState().showToast((err as Error).message || '导入失败', { type: 'error' });
+    }
+  };
+
   return (
     <div className="h-screen w-screen bg-gray-50 flex flex-col">
       {/* 顶部导航栏 */}
@@ -231,6 +269,14 @@ export default function FileManagerPage() {
               <span>新建文件夹</span>
             </button>
             <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              title="导入导出的对话文件，会放进当前所在文件夹"
+            >
+              <Upload size={18} />
+              <span>导入对话</span>
+            </button>
+            <button
               data-tour="create-session-btn"
               onClick={handleCreateSession}
               className="flex items-center gap-2 px-4 py-2 text-sm bg-leaf-600 hover:bg-leaf-700 text-white rounded-lg transition-colors"
@@ -238,6 +284,15 @@ export default function FileManagerPage() {
               <Plus size={18} />
               <span>新建对话文件</span>
             </button>
+
+            {/* 隐藏的文件选择器，由上面的按钮触发 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={handleImportFile}
+            />
           </div>
         </div>
       </div>

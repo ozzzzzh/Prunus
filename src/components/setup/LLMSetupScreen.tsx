@@ -5,7 +5,15 @@ import { redeemCdk, communityV1Url, hasCommunityBackend } from '../../utils/cdkS
 import { cn } from '../../utils/cn';
 import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
-export default function LLMSetupScreen() {
+interface LLMSetupScreenProps {
+  /**
+   * 顶部的引导文案，由调用方按场景传入。
+   * 例如免费额度用完时告知用户为什么突然看到这一页。
+   */
+  notice?: string;
+}
+
+export default function LLMSetupScreen({ notice }: LLMSetupScreenProps) {
   const config = useAPIConfigStore((s) => s.config);
   const configureByok = useAPIConfigStore((s) => s.configureByok);
   const configureCdk = useAPIConfigStore((s) => s.configureCdk);
@@ -66,6 +74,12 @@ export default function LLMSetupScreen() {
         <p className="text-sm text-gray-500 mb-6 leading-relaxed">
           使用前需要配置大模型。你可以填自己的 Key，{community ? '或兑换一个社区版兑换码。' : '本版本支持 BYOK。'}
         </p>
+
+        {notice && (
+          <div className="mb-6 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 leading-relaxed">
+            {notice}
+          </div>
+        )}
 
         {/* Tab */}
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 mb-6">

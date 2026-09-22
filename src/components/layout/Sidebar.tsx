@@ -20,12 +20,14 @@ import {
   Trash2,
   Move,
   HelpCircle,
+  Download,
 } from 'lucide-react';
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
+import { serializeSession, sessionTitleToFileName } from '../../utils/sessionTransfer';
 import type { TreeNode, FolderItem } from '../../types';
 import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
@@ -108,6 +110,27 @@ export default function Sidebar() {
       },
     });
   }, [items, renameItem]);
+
+  // 导出单个对话为 JSON 文件（可带到其它终端用「导入对话」还原）
+  const handleExportSession = useCallback((itemId: string) => {
+    const item = items[itemId];
+    if (!item || item.type !== 'session' || !item.sessionId) return;
+
+    const session = useSessionStore.getState().sessions[item.sessionId];
+    if (!session) {
+      useDialogStore.getState().showToast('这个对话的内容已不存在，无法导出', { type: 'error' });
+      return;
+    }
+
+    const blob = new Blob([serializeSession(session)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    // 文件名用会话标题（净化过），而不是 id —— 用户下载下来要能一眼认出是哪个对话
+    a.download = sessionTitleToFileName(session.title || item.name);
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [items]);
 
   // 删除
   const handleDelete = useCallback((itemId: string) => {
@@ -399,6 +422,7 @@ export default function Sidebar() {
           item={items[contextMenu.itemId]}
           onRename={() => handleRename(contextMenu.itemId!)}
           onDelete={() => handleDelete(contextMenu.itemId!)}
+          onExport={() => handleExportSession(contextMenu.itemId!)}
           onMove={() => handleMove(contextMenu.itemId!)}
           onTogglePin={() => handleTogglePin(contextMenu.itemId!)}
           onCreateFolder={() => handleCreateFolder(contextMenu.itemId!)}
@@ -438,6 +462,7 @@ function ContextMenu({
   item,
   onRename,
   onDelete,
+  onExport,
   onMove,
   onTogglePin,
   onCreateFolder,
@@ -449,6 +474,7 @@ function ContextMenu({
   item?: FolderItem;
   onRename?: () => void;
   onDelete?: () => void;
+  onExport?: () => void;
   onMove?: () => void;
   onTogglePin?: () => void;
   onCreateFolder?: () => void;
@@ -504,6 +530,16 @@ function ContextMenu({
             >
               <Move size={14} />
               移动到...
+            </button>
+          )}
+          {/* 导出只对会话有意义：文件夹是本地组织结构，导入时不会一起带过来 */}
+          {onExport && item.type === 'session' && (
+            <button
+              onClick={() => { onExport(); onClose(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <Download size={14} />
+              导出对话
             </button>
           )}
           {onRename && (

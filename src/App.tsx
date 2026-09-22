@@ -19,6 +19,7 @@ import { useFolderStore } from './store/folderStore';
 import { useUIStore } from './store/uiStore';
 import { useAPIConfigStore } from './store/apiConfigStore';
 import { initPersistence, enableAutoSave } from './services/persistenceService';
+import { requestFreeToken, communityV1Url, hasCommunityBackend } from './utils/cdkService';
 import { cn } from './utils/cn';
 import logo from './assets/PrunusLogoHighQuality.jpg';
 
@@ -33,9 +34,24 @@ function App() {
 
   const folderItems = useFolderStore(state => state.items);
   const mode = useAPIConfigStore(state => state.config.mode);
+  const model = useAPIConfigStore(state => state.config.model);
+  const configureCdk = useAPIConfigStore(state => state.configureCdk);
 
   // 初始化状态
   const [isInitialized, setIsInitialized] = useState(false);
+
+  /**
+   * 免费额度的领取状态，只在「未配置」时才需要走：
+   *   checking → 正在向后端领取
+   *   done     → 已有可用配置（含原本就配置过的用户）
+   *   failed   → 领不到（后端没开 / 额度已用完 / 请求出错），显示配置页
+   *
+   * 初值直接判定：persist 中间件对 localStorage 是同步 rehydrate 的，首帧拿到的 mode
+   * 就是真实值，不会先闪一下「检查中」。没有社区后端时无从领取，也按完成处理。
+   */
+  const [trial, setTrial] = useState<{ status: 'checking' | 'done' | 'failed'; notice?: string }>(
+    () => (mode === 'unconfigured' && hasCommunityBackend() ? { status: 'checking' } : { status: 'done' })
+  );
 
   // Initialize persistence
   // 如果 IndexedDB 为空，会自动加载 example.json 数据
@@ -45,6 +61,47 @@ function App() {
       setIsInitialized(true);
     });
   }, []);
+
+  /**
+   * 未配置时自动领取免费额度，让新用户不必先填 Key 就能上手。
+   *
+   * 设计要点：
+   * - 拿到后直接走 `configureCdk`：免费 token 与兑换来的 token 在数据上一样，
+   *   请求链路、额度扣减、402 判定全都复用，此处不需要任何新分支。
+   * - `remaining <= 0` 时**不配置**，直接显示配置页，避免「先配置、再让第一次
+   *   请求 402 弹回来」白跑一轮。
+   * - 没有社区后端（纯开源自托管）时不去请求，保持原来的 BYOK 闸门行为。
+   */
+  useEffect(() => {
+    if (mode !== 'unconfigured') return;
+    // 没有社区后端就没有免费额度可领，保持原来的 BYOK 闸门行为。
+    // 这里刻意不 setState：该条件在渲染时用 hasCommunityBackend() 判定即可，
+    // 而在 effect 里同步 setState 会触发 react-hooks/set-state-in-effect。
+    if (!hasCommunityBackend()) return;
+
+    let cancelled = false;
+
+    requestFreeToken()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.remaining > 0) {
+          configureCdk({ token: res.token, baseUrl: communityV1Url(), model });
+          setTrial({ status: 'done' });
+        } else {
+          // 后端把同一个 token 还了回来，说明这个身份已经用完了免费额度
+          setTrial({ status: 'failed', notice: '免费额度已用完，配置自己的 Key 或兑换兑换码后即可继续使用。' });
+        }
+      })
+      .catch(() => {
+        // 后端不可用不该把用户挡在门外之外再报一个看不懂的错，
+        // 直接回落到配置页，让他可以走 BYOK。
+        if (!cancelled) setTrial({ status: 'failed' });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, model, configureCdk]);
 
   // 获取当前会话所在的文件夹路径（面包屑）
   const breadcrumbs = useMemo(() => {
@@ -95,9 +152,19 @@ function App() {
     );
   }
 
-  // LLM 配置闸门：未配置前阻断使用
+  // LLM 配置闸门。
+  // 与旧版的区别：未配置时先试着领免费额度，只有领不到才弹配置页。
+  // 注意 trial.status === 'done' 时 mode 已被 configureCdk 改成 'cdk'，
+  // 下一次渲染就不会进这个分支了，所以这里只需处理「检查中」和「领不到」两种。
   if (mode === 'unconfigured') {
-    return <LLMSetupScreen />;
+    if (hasCommunityBackend() && trial.status === 'checking') {
+      return (
+        <div className="h-screen w-screen bg-[#fafafa] flex items-center justify-center">
+          <div className="text-gray-500 text-sm">正在准备免费额度…</div>
+        </div>
+      );
+    }
+    return <LLMSetupScreen notice={trial.notice} />;
   }
 
   // 如果在文件管理页面，直接返回文件管理页面组件

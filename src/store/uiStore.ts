@@ -71,6 +71,21 @@ interface UIState {
   exitSelectingMode: () => void;
   toggleNodeSelection: (nodeId: string) => void;
 
+  // ===== 画布节点检索 =====
+
+  /** 检索面板是否打开 */
+  isSearchOpen: boolean;
+  /**
+   * 当前**正在预览**的那一个检索结果（不是全部命中）。
+   *
+   * 刻意与「当前焦点节点」（session.currentNodeId）分开存：
+   * 焦点表示"我在看哪个"，这里表示"检索结果翻到第几个"，是两件事。
+   * 只存一个 id 而不是一组：高亮整组会让用户分不清此刻预览的是哪一个。
+   */
+  searchActiveNodeId: string | null;
+  setSearchOpen: (open: boolean) => void;
+  setSearchActiveNode: (nodeId: string | null) => void;
+
   // ===== 交互式引导 =====
 
   // 引导状态
@@ -154,6 +169,13 @@ export const useUIStore = create<UIState>()(
             : [...state.selectedNodeIds, nodeId],
         };
       }),
+
+      // ===== 画布节点检索 =====
+
+      isSearchOpen: false,
+      searchActiveNodeId: null,
+      setSearchOpen: (open) => set({ isSearchOpen: open }),
+      setSearchActiveNode: (nodeId) => set({ searchActiveNodeId: nodeId }),
 
       // ===== 交互式引导 =====
 

@@ -17,7 +17,7 @@ import {
   useStore,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Focus, Sparkles, X, BookOpen, ChevronsDownUp, ChevronsUpDown, Plus } from 'lucide-react';
+import { Focus, Sparkles, X, BookOpen, ChevronsDownUp, ChevronsUpDown, Plus, Search } from 'lucide-react';
 
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -29,6 +29,7 @@ import { cn } from '../../utils/cn';
 import { resolveNodeSize } from '../../utils/nodeSize';
 import MessageNode from './MessageNode';
 import SummaryModal from '../summary/SummaryModal';
+import NodeSearchBar from './NodeSearchBar';
 import GlobalPromptModal from '../layout/GlobalPromptModal';
 import { getLayoutedElements } from '../../utils/layout';
 
@@ -79,6 +80,9 @@ export default function ChatCanvas() {
   const enterSelectingMode = useUIStore(state => state.enterSelectingMode);
   const exitSelectingMode = useUIStore(state => state.exitSelectingMode);
   const setEditingNode = useUIStore(state => state.setEditingNode);
+  const isSearchOpen = useUIStore(state => state.isSearchOpen);
+  const setSearchOpen = useUIStore(state => state.setSearchOpen);
+  const searchActiveNodeId = useUIStore(state => state.searchActiveNodeId);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
 
@@ -87,7 +91,7 @@ export default function ChatCanvas() {
   const hasGlobalPrompt = Boolean(session?.globalPrompt?.trim());
 
   // React Flow instance for programmatic view control
-  const { setCenter, getZoom, getViewport } = useReactFlow();
+  const { setCenter, getZoom, getViewport, getNode } = useReactFlow();
   // 画布容器尺寸（为 0 表示 React Flow 还没测量完，此时居中会算错，必须等）
   const paneWidth = useStore(state => state.width);
   const paneHeight = useStore(state => state.height);
@@ -139,7 +143,9 @@ export default function ChatCanvas() {
         position: { x: 0, y: 0 }, // 由 getLayoutedElements 计算
         width,
         height,
-        data: { node, isActive: isCurrentFocus },
+        // isSearchHit 是渲染相关字段 —— 加进 MessageNode 的 arePropsEqual 白名单，
+        // 否则检索高亮会因为 memo 命中而刷不出来
+        data: { node, isActive: isCurrentFocus, isSearchHit: searchActiveNodeId === node.id },
       });
 
       node.childrenIds.forEach(childId => {
@@ -161,7 +167,7 @@ export default function ChatCanvas() {
     });
 
     return getLayoutedElements(nodes, edges, 'TB', measuredSizes);
-  }, [session, sizeStates, measuredSizes]);
+  }, [session, sizeStates, measuredSizes, searchActiveNodeId]);
 
   // Using controlled state for React Flow to allow interactions if needed
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -430,6 +436,62 @@ export default function ChatCanvas() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  /**
+   * Ctrl/Cmd + F 打开节点检索。
+   *
+   * 这里**一律拦截**浏览器原生查找（产品决策）。注意不能复用上面那个 handleKeyDown：
+   * 它开头就 `if (e.ctrlKey || e.metaKey) return;`，专门把带修饰键的组合让出去。
+   */
+  useEffect(() => {
+    const onFind = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return;
+      e.preventDefault();
+      const ui = useUIStore.getState();
+      const next = !ui.isSearchOpen;
+      // 与「节点总结」多选模式互斥：两者都占用画布上方区域，同时开启会互相遮挡
+      if (next) ui.exitSelectingMode();
+      ui.setSearchOpen(next);
+    };
+    window.addEventListener('keydown', onFind);
+    return () => window.removeEventListener('keydown', onFind);
+  }, []);
+
+  /**
+   * 把画布定位到某个检索结果。
+   *
+   * 做两件事：
+   * 1. **收缩的节点先展开** —— 否则定位过去只是一个 56px 的圆标，看不到内容，
+   *    用户还得再点一次才能确认是不是要找的那个
+   * 2. 用与右下角「聚焦」按钮**完全相同**的行为居中：同样的放大倍数与纵向偏移。
+   *    刻意用 FOCUS_ZOOM 而不是保持当前缩放 —— 缩到很小时每次定位只挪一点点，
+   *    用户看不出切换到了哪个节点（实测反馈如此）。
+   *
+   * 时序上必须**等布局落定再读坐标**：展开会触发重排，节点的宽度从 56 变成 480、
+   * 位置随之改变，立刻按旧坐标居中会偏出去一大截。80ms 与本文件里既有的
+   * 「跟随」effect 的 50ms 同一量级，足够走完 store 更新 + 重排 + 渲染。
+   */
+  const handleLocateNode = (nodeId: string) => {
+    // 幂等：已经是展开态时这个调用没有副作用
+    setNodesCollapsed([nodeId], false);
+
+    setTimeout(() => {
+      const target = getNode(nodeId);
+      const currentSessionId = useSessionStore.getState().activeSessionId;
+      const node = currentSessionId
+        ? useSessionStore.getState().sessions[currentSessionId]?.nodes[nodeId]
+        : undefined;
+      if (!target || !node) return;
+
+      const measured = useNodeSizeStore.getState().sizes[nodeId];
+      const { width, height } = resolveNodeSize(node, measured);
+      setCenter(
+        target.position.x + width / 2,
+        target.position.y + height / 2 + FOCUS_OFFSET_Y,
+        { zoom: FOCUS_ZOOM, duration: 400 }
+      );
+    }, 80);
+  };
+
   if (!session) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center h-full bg-[#fafafa] canvas-texture">
@@ -569,6 +631,18 @@ export default function ChatCanvas() {
       ) : (
         <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
           <button
+            onClick={() => {
+              // 与「节点总结」多选模式互斥
+              exitSelectingMode();
+              setSearchOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors"
+            title="搜索节点（Ctrl+F）"
+          >
+            <Search size={14} />
+            搜索
+          </button>
+          <button
             onClick={() => setShowGlobalPrompt(true)}
             className={cn(
               'flex items-center gap-1.5 px-4 py-2 text-sm rounded-full border shadow-sm transition-colors',
@@ -583,7 +657,11 @@ export default function ChatCanvas() {
             {hasGlobalPrompt && <span className="w-1.5 h-1.5 rounded-full bg-leaf-500" />}
           </button>
           <button
-            onClick={enterSelectingMode}
+            onClick={() => {
+              // 与检索面板互斥（它俩都占画布上方区域）
+              setSearchOpen(false);
+              enterSelectingMode();
+            }}
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors"
             title="选择多个节点进行知识总结"
           >
@@ -591,6 +669,10 @@ export default function ChatCanvas() {
             节点总结
           </button>
         </div>
+      )}
+
+      {isSearchOpen && (
+        <NodeSearchBar onClose={() => setSearchOpen(false)} onLocate={handleLocateNode} />
       )}
 
       {summaryNodes && (

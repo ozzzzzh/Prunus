@@ -206,7 +206,12 @@ export default function Sidebar() {
       const item = items[node.id];
       const isActive = node.type === 'session' && node.sessionId === activeSessionId;
       const isFolderSelected = node.type === 'folder' && activeSessionId === null;
-      const sessionTitle = node.sessionId ? useSessionStore.getState().sessions[node.sessionId]?.title : node.name;
+      // 会话名以 sessionStore.title 为准，取不到就回落 FolderItem.name：
+      // 只写一半（改名只改了一边、或会话已不存在）时不会显示成空名字。
+      // 与文件管理页（sessions[id]?.title || item.name）保持一致。
+      const sessionTitle = (node.sessionId
+        ? useSessionStore.getState().sessions[node.sessionId]?.title
+        : node.name) || item?.name || node.name;
       const hasChildren = node.children.length > 0;
       const isCollapsed = item?.collapsed ?? true;
       const isPinned = node.pinned ?? false;

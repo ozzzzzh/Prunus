@@ -15,7 +15,7 @@ interface FolderState {
 
   // 文件夹操作
   createFolder: (parentId: string | null, name: string) => string;
-  renameFolder: (folderId: string, name: string) => void;
+  /** 改名：文件夹与会话共用。刻意只留这一个入口，避免「叫 folder 的那个只能改文件夹」的坑 */
   renameItem: (itemId: string, name: string) => void;
   deleteFolder: (folderId: string) => void;
   moveItem: (itemId: string, targetFolderId: string | null) => boolean;
@@ -79,20 +79,6 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     }));
 
     return folderId;
-  },
-
-  renameFolder: (folderId, name) => {
-    set((state) => {
-      const folder = state.items[folderId];
-      if (!folder || folder.type !== 'folder') return state;
-
-      return {
-        items: {
-          ...state.items,
-          [folderId]: { ...folder, name, updatedAt: Date.now() },
-        },
-      };
-    });
   },
 
   renameItem: (itemId, name) => {

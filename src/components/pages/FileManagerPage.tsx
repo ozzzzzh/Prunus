@@ -47,7 +47,7 @@ export default function FileManagerPage() {
   // Store 状态
   const items = useFolderStore((state) => state.items);
   const createFolder = useFolderStore((state) => state.createFolder);
-  const renameFolder = useFolderStore((state) => state.renameFolder);
+  const renameItem = useFolderStore((state) => state.renameItem);
   const deleteFolder = useFolderStore((state) => state.deleteFolder);
   const createSessionItem = useFolderStore((state) => state.createSessionItem);
   const deleteSessionItem = useFolderStore((state) => state.deleteSessionItem);
@@ -153,7 +153,14 @@ export default function FileManagerPage() {
       title: '重命名',
       initialValue: item.name,
       onConfirm: (newName) => {
-        renameFolder(id, newName);
+        // 用通用的 renameItem，不要用 renameFolder —— 后者对 type !== 'folder'
+        // 的项直接 return，会话改不动（这就是「点了确认没反应」的原因之一）。
+        renameItem(id, newName);
+        // 名称有两个来源：文件夹看 FolderItem.name，会话看 sessionStore 的 title
+        // （见下面的列表/网格渲染）。会话必须两边一起写，否则改了名字界面也不会变。
+        if (item.type === 'session' && item.sessionId) {
+          useSessionStore.getState().renameSession(item.sessionId, newName);
+        }
       },
     });
     setContextMenu(null);

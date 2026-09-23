@@ -32,13 +32,15 @@ interface MessageNodeProps {
   data: {
     node: PrunusNode;
     isActive: boolean;
+    /** 命中当前检索 —— 与 isActive（当前焦点）是两回事，视觉也要区分开 */
+    isSearchHit?: boolean;
   };
 }
 
 function MessageNode({ data }: MessageNodeProps) {
   countRender('MessageNode'); // 临时诊断：拖动期间的增长量 = 重渲染次数
 
-  const { node, isActive } = data;
+  const { node, isActive, isSearchHit } = data;
   const focusNode = useChatStore((state) => state.focusNode);
   const splitNodeIntoBranches = useChatStore((state) => state.splitNodeIntoBranches);
   const setNodeMarker = useChatStore((state) => state.setNodeMarker);
@@ -730,7 +732,9 @@ function MessageNode({ data }: MessageNodeProps) {
                 : isActive
                   ? "scale-110 border-leaf-400 shadow-xl"
                   : "border-gray-200 hover:scale-110 hover:border-leaf-300",
-              isSelectingMode && !isSelected && isRootNode && "opacity-40"
+              isSelectingMode && !isSelected && isRootNode && "opacity-40",
+              // 收缩态同样要能看出命中 —— 否则搜到收起来的节点会"看不见结果"
+              isSearchHit && "ring-4 ring-amber-200 border-amber-400"
             )}
             title={isSelectingMode ? "点击选中" : "Click to expand"}
           >
@@ -830,7 +834,11 @@ function MessageNode({ data }: MessageNodeProps) {
           isSelectingMode && !isEditing && isSelected && "border-leaf-500 ring-2 ring-leaf-300 bg-white opacity-100 z-20 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)]",
           isSelectingMode && !isEditing && !isSelected && !isRootNode && "bg-white opacity-100 hover:border-leaf-300 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)]",
           isSelectingMode && !isEditing && !isSelected && isRootNode && "opacity-40",
-          !isEditing && !isSelectingMode && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10"
+          !isEditing && !isSelectingMode && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10",
+          // 检索命中：用琥珀色，与"当前焦点"的 leaf 绿刻意区分开 ——
+          // 一个节点可以既不是焦点又是命中，两者混用同一种颜色会分不清。
+          // 放在最后，保证它能盖过上面的焦点样式
+          isSearchHit && !isEditing && "ring-2 ring-amber-300 border-amber-300 opacity-100"
         )}
         data-tour={isActive ? "current-node" : isRootNode ? "root-node" : undefined}
       >
@@ -1220,6 +1228,8 @@ function MessageNode({ data }: MessageNodeProps) {
  */
 function arePropsEqual(prev: MessageNodeProps, next: MessageNodeProps): boolean {
   if (prev.data.isActive !== next.data.isActive) return false;
+  // 检索高亮也是渲染相关字段，漏掉它高亮就会被 memo 挡住刷不出来
+  if (prev.data.isSearchHit !== next.data.isSearchHit) return false;
 
   const a = prev.data.node;
   const b = next.data.node;

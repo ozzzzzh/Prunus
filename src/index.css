@@ -34,10 +34,23 @@
   --color-blossom-light: #f5d5dc;
 }
 
+/* ============================================
+   微应用面板宽度
+
+   刻意固定、不做可拖拽分隔条：拖动会让画布每帧改变尺寸，触发
+   React Flow 视口重算与节点测量重排（这类抖动在本项目已经踩过）。
+   用 clamp 而不是写死像素：窄屏上占比大一些才读得清论文，宽屏上又不至于
+   把画布挤得太小。注意 @theme 里放不了非命名空间的变量，所以写在 :root。
+   ============================================ */
+:root {
+  --micro-app-w: clamp(360px, 42vw, 680px);
+}
+
 /* 基础样式 */
 html, body, #root {
   height: 100%;
   margin: 0;
+
   padding: 0;
   background-color: #fafafa;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

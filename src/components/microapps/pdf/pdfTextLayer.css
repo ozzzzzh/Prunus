@@ -1,0 +1,67 @@
+/**
+ * pdf.js 文本层的样式
+ *
+ * 为什么不直接 import `pdfjs-dist/web/pdf_viewer.css`：那是一份 6000+ 行的原始源码，
+ * 带嵌套语法与大量与本项目无关的查看器外壳样式（工具栏、侧栏、注释层…）。
+ * 这里只抄真正需要的那几条，且写成扁平 CSS，不依赖后处理器降级。
+ *
+ * 文本层的作用只有一个：**让页面上的字可以被选中**。canvas 只是像素，
+ * 上面没有任何可选中的文字，必须再叠一层透明的真文字。
+ *
+ * 由 PdfPageView 负责给容器写上 `--total-scale-factor`（= viewport.scale），
+ * 这一条是硬约束：TextLayer 构造时会立刻按它计算尺寸。
+ */
+
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  z-index: 0;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+
+  /* TextLayer 会读取这几个变量完成缩放换算，缺了会导致文字层与画面错位 */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+}
+
+.pdf-text-layer span,
+.pdf-text-layer br {
+  /* 透明文字：看得见的是下面 canvas 画的字，这一层只负责"被选中" */
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+}
+
+.pdf-text-layer > :not(.markedContent),
+.pdf-text-layer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --scale-x: 1;
+  --rotate: 0deg;
+  /* --font-height 由 pdf.js 内联写在每个 span 上 */
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text-layer .markedContent {
+  display: contents;
+}
+
+/**
+ * 选中高亮是用户唯一能看见的反馈 —— 文字本身是透明的，
+ * 没有这条样式，拖选时屏幕上不会有任何变化。
+ */
+.pdf-text-layer ::selection {
+  background: rgba(106, 158, 98, 0.3); /* leaf-500 透明版 */
+}

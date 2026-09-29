@@ -1,8 +1,10 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
-import { isAIChatNode, getNodeAttachment } from '../../types';
+import { isAIChatNode, getNodeAttachment, getNodePdfRef, isPdfQuote, PDF_QUOTE_KEY } from '../../types';
+import { usePdfViewerStore } from '../../store/pdfViewerStore';
+import { hasLocalPdf } from '../../utils/pdfDocumentStore';
 import { useChatStore } from '../../store/chatStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -16,7 +18,7 @@ import { smartParseBranchesFromContent } from '../../utils/aiParser';
 import { splitContentLocally } from '../../utils/contentSplit';
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { markdownToHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
+import { markdownToHtml, escapeHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
 
 const MARKER_OPTIONS = [
   { emoji: '🍃', label: 'Leaf' },
@@ -329,6 +331,50 @@ function MessageNode({ data }: MessageNodeProps) {
   // 附件存在 metadata 里（见 types/node.ts）。守卫会挡住脏数据，取不到就是 null。
   // 只是几次 typeof 检查，不必 memo。
   const nodeAttachment = getNodeAttachment(node);
+  // 摘录出处（来自 PDF 阅读器的节点才有）。同样存在 metadata 里。
+  const nodePdfRef = getNodePdfRef(node);
+  // 是否为"原文摘录"节点：决定正文渲染走纯文本还是 markdown，以及编辑时怎么进编辑器。
+  // 在这里算一次而不是各处再调 isPdfQuote(node)：后者会让若干 effect 多出一个"隐式依赖"，
+  // 而它是布尔量，作为依赖既精确又稳定
+  const isQuoteNode = isPdfQuote(node);
+
+  /**
+   * 点出处角标 → 在左侧阅读器里定位到这一页。
+   *
+   * 文件是否在本机是**异步检查**，所以放在点击时做而不是渲染时：
+   * 画布上可能有几百个节点，为每个节点查一次 IndexedDB 是不可接受的。
+   */
+  const handleOpenSource = async () => {
+    if (!nodePdfRef) return;
+
+    if (!(await hasLocalPdf(nodePdfRef.docId))) {
+      useDialogStore.getState().showToast('本机没有这份 PDF，重新上传同一份即可恢复', { type: 'info' });
+      return;
+    }
+
+    const ui = useUIStore.getState();
+    const activeId = useSessionStore.getState().activeSessionId;
+    const currentDocId = activeId
+      ? useSessionStore.getState().sessions[activeId]?.microApps?.pdf?.docId
+      : undefined;
+
+    // 会话当前读的不是这份文件（例如换过文件、或这条引用来自导入的会话）：
+    // 把阅读器切到引用指向的那一份再跳。文件就在本机，所以做得到 ——
+    // 引用点了没反应才是更糟的结果。
+    if (activeId && currentDocId !== nodePdfRef.docId) {
+      useSessionStore.getState().setSessionMicroApp(activeId, 'pdf', {
+        docId: nodePdfRef.docId,
+        page: nodePdfRef.page,
+        name: nodePdfRef.name,
+      });
+      useDialogStore.getState().showToast(`已切换到「${nodePdfRef.name || '引用的 PDF'}」`, {
+        type: 'info',
+      });
+    }
+
+    ui.setActiveMicroApp('pdf');
+    usePdfViewerStore.getState().jumpToPage(nodePdfRef.docId, nodePdfRef.page);
+  };
 
   const isAIChat = isAIChatNode(node);
   const role = isAIChat ? node.role : null;
@@ -378,9 +424,24 @@ function MessageNode({ data }: MessageNodeProps) {
     [displayReasoning, isStreaming]
   );
 
+  /**
+   * 正文渲染分两条路，判据是「这个节点是不是 PDF 原文摘录」（metadata.pdfQuote）。
+   *
+   * 摘录必须**逐字**显示用户选中的原文，所以不走 markdown：
+   * 1. 选区里的 `$ * _ # |` 会被解释成公式/强调/列表/表格，看到就不是原文了
+   * 2. 渲染管线带 rehypeRaw，会把正文当 HTML 解析 —— 而文档文字是**不可信输入**，
+   *    这是应用里第一处"第三方文字变成节点正文"的地方，不该给它这条路
+   *
+   * 用户手动编辑后这个标记会被清掉（见 handleEditBlur），节点随即回到普通路径。
+   */
   const renderedContent = useMemo(
-    () => <MarkdownText streaming={isStreaming}>{displayContent}</MarkdownText>,
-    [displayContent, isStreaming]
+    () =>
+      isQuoteNode ? (
+        <div className="whitespace-pre-wrap break-words">{displayContent}</div>
+      ) : (
+        <MarkdownText streaming={isStreaming}>{displayContent}</MarkdownText>
+      ),
+    [displayContent, isStreaming, isQuoteNode]
   );
 
   // 获取缩略信息（剥离 HTML 标签和 markdown 符号）
@@ -643,7 +704,12 @@ function MessageNode({ data }: MessageNodeProps) {
 
     // 直接设置编辑器内容（同步）
     const isHtml = node.content.includes('<') && node.content.includes('>');
-    if (isHtml) {
+    if (isQuoteNode) {
+      // 摘录节点：按纯文本进编辑器，既不做 markdown 转换（会把 $ * _ 变样），
+      // 也不当 HTML 直接塞（文档文字是不可信输入，先转义）
+      setEditorContent(escapeHtml(node.content));
+      isInitializedRef.current = true;
+    } else if (isHtml) {
       setEditorContent(node.content);
       isInitializedRef.current = true;
     } else {
@@ -656,7 +722,7 @@ function MessageNode({ data }: MessageNodeProps) {
         }
       });
     }
-  }, [isEditing, node.id, node.content]);
+  }, [isEditing, node.id, node.content, isQuoteNode]);
 
   // 当编辑器内容设置完成后，聚焦并将光标移动到末尾。
   //
@@ -705,7 +771,15 @@ function MessageNode({ data }: MessageNodeProps) {
       setPendingContent(newContent);
       // 只有内容真正改变时才更新
       if (newContent !== originalContentRef.current) {
-        updateNodeContent(node.id, newContent);
+        // 编辑过的摘录不再是"原文摘录"：清掉标记，让它回到普通的 markdown/HTML 渲染路径。
+        // 必须与正文在同一次写入里清（分两次写会被 arePropsEqual 判成没变化）。
+        // 注意 pdfRef（出处）要保留 —— 用户改的是文字，不是"这段话从哪来"
+        updateNodeContent(
+          node.id,
+          newContent,
+          undefined,
+          isQuoteNode ? { [PDF_QUOTE_KEY]: null } : undefined
+        );
       }
     }
     setEditingNode(null);
@@ -977,6 +1051,26 @@ function MessageNode({ data }: MessageNodeProps) {
           </div>
         )}
 
+        {/*
+          出处标签：这个节点摘录自哪份 PDF 的第几页。
+          点一下让左侧阅读器跳到那一页 —— 这是"对着原文"这件事能不能成立的关键：
+          没有它，节点就只是复制粘贴，用户回到画布后再也找不到出处。
+        */}
+        {nodePdfRef && !isEditing && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenSource();
+            }}
+            className="mb-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-leaf-50 border border-leaf-100 text-[11px] text-leaf-700 shrink-0 hover:bg-leaf-100 transition-colors nodrag"
+            title="在左侧阅读器中定位到这一页"
+          >
+            <FileText size={11} className="flex-shrink-0" />
+            <span className="truncate max-w-[200px]">{nodePdfRef.name || 'PDF 原文'}</span>
+            <span className="text-leaf-500 flex-shrink-0">第 {nodePdfRef.page} 页</span>
+          </button>
+        )}
+
         {/* Reasoning 内容 - 思考过程 */}
         {displayReasoning && displayReasoning.length > 0 && !isEditing && (
           <div className="mb-3 border-l-2 border-amber-300 bg-amber-50/50 rounded-r-lg overflow-hidden shrink-0">
@@ -1244,6 +1338,9 @@ function arePropsEqual(prev: MessageNodeProps, next: MessageNodeProps): boolean 
   return (
     a.id === b.id &&
     a.content === b.content &&
+    // metadata 现在是渲染相关字段（附件标签、PDF 出处角标都读它），漏掉的话
+    // 角标写进去也刷不出来。store 只在真的写入时才重建对象，比较成本可忽略
+    a.metadata === b.metadata &&
     a.marker === b.marker &&
     a.collapsed === b.collapsed &&
     a.width === b.width &&

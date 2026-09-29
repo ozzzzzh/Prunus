@@ -6,11 +6,12 @@
 
 import type { ChatSession } from '../store/sessionStore';
 import type { APIConfig } from '../store/apiConfigStore';
-import type { FolderItem } from '../types';
+import type { FolderItem, PdfDocumentRecord } from '../types';
 import type {
   ISessionRepository,
   ISettingsRepository,
   IFolderRepository,
+  IPdfDocumentRepository,
   IPersistenceRepository,
 } from './interface';
 import {
@@ -18,6 +19,7 @@ import {
   saveData,
   getData,
   getAllData,
+  hasData,
   deleteData,
   clearStore,
   saveBatch,
@@ -129,17 +131,50 @@ export class IndexedDBFolderRepository implements IFolderRepository {
 }
 
 /**
+ * PDF 文档 Repository - IndexedDB 实现（微应用「PDF 阅读器」）
+ *
+ * 刻意**不接入 saveAll / exportAll / importAll**：
+ * - saveAll 是"清表 + 全量重写"，文档是几 MB 级二进制，不该被防抖保存反复重写
+ * - 导出成 JSON 会话文件时只带 docId 引用；把论文原件塞进分享用的 JSON 里
+ *   既笨重又没道理，换设备后用 hash 重新关联即可
+ */
+export class IndexedDBPdfDocumentRepository implements IPdfDocumentRepository {
+  async has(docId: string): Promise<boolean> {
+    return hasData(STORES.PDF_DOCS, docId);
+  }
+
+  async get(docId: string): Promise<PdfDocumentRecord | null> {
+    const record = await getData<PdfDocumentRecord>(STORES.PDF_DOCS, docId);
+    return record ?? null;
+  }
+
+  async save(record: PdfDocumentRecord): Promise<void> {
+    await saveData(STORES.PDF_DOCS, record);
+  }
+
+  async delete(docId: string): Promise<void> {
+    await deleteData(STORES.PDF_DOCS, docId);
+  }
+
+  async clear(): Promise<void> {
+    await clearStore(STORES.PDF_DOCS);
+  }
+}
+
+/**
  * 组合 Repository - IndexedDB 实现
  */
 export class IndexedDBRepository implements IPersistenceRepository {
   session: ISessionRepository;
   settings: ISettingsRepository;
   folder: IFolderRepository;
+  pdf: IPdfDocumentRepository;
 
   constructor() {
     this.session = new IndexedDBSessionRepository();
     this.settings = new IndexedDBSettingsRepository();
     this.folder = new IndexedDBFolderRepository();
+    this.pdf = new IndexedDBPdfDocumentRepository();
   }
 
   async init(): Promise<void> {

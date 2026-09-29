@@ -11,6 +11,7 @@ import SettingsModal from './components/layout/SettingsModal';
 import DialogHost from './components/layout/DialogHost';
 import FileManagerPage from './components/pages/FileManagerPage';
 import Sidebar from './components/layout/Sidebar';
+import MicroAppHost from './components/microapps/MicroAppHost';
 import LLMSetupScreen from './components/setup/LLMSetupScreen';
 import { HelpPanel, InteractiveTour } from './components/onboarding';
 import ExpandedView from './components/expanded/ExpandedView';
@@ -33,6 +34,9 @@ function App() {
   const expandedNodeId = useUIStore(state => state.expandedNodeId);
 
   const folderItems = useFolderStore(state => state.items);
+  const activeMicroApp = useUIStore(state => state.activeMicroApp);
+  const microAppWidth = useUIStore(state => state.microAppWidth);
+  const microAppResizing = useUIStore(state => state.isResizingMicroApp);
   const mode = useAPIConfigStore(state => state.config.mode);
   const model = useAPIConfigStore(state => state.config.model);
   const configureCdk = useAPIConfigStore(state => state.configureCdk);
@@ -102,6 +106,16 @@ function App() {
       cancelled = true;
     };
   }, [mode, model, configureCdk]);
+
+  /**
+   * 把面板宽度写到 :root 的 CSS 变量上。
+   *
+   * 用变量而不是给 main / 面板传 style：拖动分隔条时只需要改这一个变量，
+   * 完全不触发 React 重渲染（见 MicroAppHost 里分隔条的说明）。
+   */
+  useEffect(() => {
+    document.documentElement.style.setProperty('--micro-app-w', `${microAppWidth}px`);
+  }, [microAppWidth]);
 
   // 获取当前会话所在的文件夹路径（面包屑）
   const breadcrumbs = useMemo(() => {
@@ -177,16 +191,30 @@ function App() {
     );
   }
 
+  // 微应用面板开着时占掉左侧一条，画布从它右边开始。
+  // 侧边栏仍然可以展开，并作为浮层盖在面板之上（z-index 见 Sidebar）——
+  // 微应用跟对话走，所以要允许用户在面板开着时切会话。
+  const microAppOpen = Boolean(activeMicroApp) && Boolean(activeSessionId);
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[#fafafa] text-gray-900">
       {/* 侧边栏 */}
       <Sidebar />
 
+      {/*
+        微应用宿主。**必须常驻在这里**（内部自己 return null），不要写成条件渲染：
+        位置固定的子节点才能保证 <main> 在子元素列表里的索引不变，
+        React 也就不会重挂载 ReactFlowProvider / ChatCanvas —— 重挂载会丢掉视口与选中。
+      */}
+      <MicroAppHost />
+
       {/* 主内容区域 */}
       <main
         className={cn(
-          'absolute top-0 right-0 bottom-0 flex flex-col h-full overflow-hidden transition-all duration-300',
-          sidebarCollapsed ? 'left-0' : 'left-64'
+          'absolute top-0 right-0 bottom-0 flex flex-col h-full overflow-hidden',
+          // 拖动分隔条时必须关掉过渡：否则画布边缘会慢半拍地跟随面板边缘
+          microAppResizing ? 'transition-none' : 'transition-all duration-300',
+          microAppOpen ? 'left-[var(--micro-app-w)]' : sidebarCollapsed ? 'left-0' : 'left-64'
         )}
       >
         {/* 顶部导航栏 - Canvas视图专用，高度h-12与Sidebar对齐 */}

@@ -11,6 +11,7 @@
  */
 
 import type { DocKind } from '../types/node';
+import { getPdfjs, getPdfDocumentParams } from './pdfjs';
 
 /** 解析后保留的最大字符数，超出即截断（截断会在界面上明确告知用户） */
 export const MAX_DOC_CHARS = 20000;
@@ -79,13 +80,11 @@ async function extractDocx(file: File): Promise<string> {
 
 /** .pdf → 纯文本（逐页提取） */
 async function extractPdf(file: File): Promise<{ text: string; pages: number }> {
-  const pdfjs = await import('pdfjs-dist');
-  // worker 让解析不阻塞主线程。用 Vite 的 ?url 拿到打包后 worker 的实际地址。
-  const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-
+  // worker 与侧载资源统一由 utils/pdfjs.ts 配置。带上 cmaps 是有实际意义的：
+  // 中文 PDF 常用 CID 字体引用预定义 CMap，缺了它取出来的字符是错的。
+  const pdfjs = await getPdfjs();
   const data = new Uint8Array(await file.arrayBuffer());
-  const doc = await pdfjs.getDocument({ data }).promise;
+  const doc = await pdfjs.getDocument({ data, ...getPdfDocumentParams() }).promise;
 
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {

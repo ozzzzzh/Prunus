@@ -15,6 +15,21 @@ import rehypeRaw from 'rehype-raw';
 import rehypeStringify from 'rehype-stringify';
 
 /**
+ * 转义 HTML 特殊字符。
+ *
+ * 用途：把**外来的纯文本**放进 contentEditable 时（例如 PDF 摘录），
+ * 既不能被当成标签解析，字符本身又必须原样保留。
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * 颜色配置
  */
 export const HIGHLIGHT_COLORS = [

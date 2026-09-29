@@ -370,14 +370,17 @@ function MessageNode({ data }: MessageNodeProps) {
   // Markdown 渲染结果按内容缓存。
   // 这是整个节点最贵的操作（remark-gfm 解析 + rehype-raw 重建 HTML），
   // 不缓存的话，父组件每次重渲染都会把所有可见节点的全文重新解析一遍。
+  //
+  // 流式期间额外传 streaming：那时内容每个 chunk 都在变，光靠这里的缓存拦不住
+  // 重解析，必须靠 MarkdownText 内部的分段渲染把开销从 O(n²) 压回 O(n)。
   const renderedReasoning = useMemo(
-    () => (displayReasoning ? <MarkdownText>{displayReasoning}</MarkdownText> : null),
-    [displayReasoning]
+    () => (displayReasoning ? <MarkdownText streaming={isStreaming}>{displayReasoning}</MarkdownText> : null),
+    [displayReasoning, isStreaming]
   );
 
   const renderedContent = useMemo(
-    () => <MarkdownText>{displayContent}</MarkdownText>,
-    [displayContent]
+    () => <MarkdownText streaming={isStreaming}>{displayContent}</MarkdownText>,
+    [displayContent, isStreaming]
   );
 
   // 获取缩略信息（剥离 HTML 标签和 markdown 符号）

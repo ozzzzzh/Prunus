@@ -292,7 +292,7 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
               {reasoningExpanded && (
                 <div className="px-3 py-2 text-xs text-gray-600 leading-relaxed border-t border-amber-200/50">
                   <div className="prose prose-xs max-w-none">
-                    <MarkdownText>{displayReasoning || ''}</MarkdownText>
+                    <MarkdownText streaming={isStreaming}>{displayReasoning || ''}</MarkdownText>
                   </div>
                 </div>
               )}
@@ -318,7 +318,7 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
               isEditing ? "cursor-text outline-none ring-2 ring-blue-400 rounded-lg p-2 -m-2" : "cursor-default"
             )}
           >
-            <MarkdownText>{displayContent}</MarkdownText>
+            <MarkdownText streaming={isStreaming}>{displayContent}</MarkdownText>
           </div>
         </div>
       </motion.div>

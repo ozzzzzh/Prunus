@@ -27,9 +27,11 @@ import { isAIChatNode } from '../../types';
 import type { SummaryNodeInput } from '../../utils/summarize';
 import { cn } from '../../utils/cn';
 import { resolveNodeSize } from '../../utils/nodeSize';
+import { isMicroAppInteracting } from '../../utils/microAppFocus';
 import MessageNode from './MessageNode';
 import SummaryModal from '../summary/SummaryModal';
 import NodeSearchBar from './NodeSearchBar';
+import MicroAppLauncher from '../microapps/MicroAppLauncher';
 import GlobalPromptModal from '../layout/GlobalPromptModal';
 import { getLayoutedElements } from '../../utils/layout';
 
@@ -64,6 +66,25 @@ const FLOATING_BTN_CLASS =
 /** 仅「新增子节点」用：多选模式下该操作无意义，需要可见的禁用态 */
 const FLOATING_BTN_DISABLED_CLASS =
   'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-white disabled:hover:text-gray-500';
+
+/**
+ * 右上角胶囊按钮组的公共样式（搜索 / 会话背景 / 节点总结）。
+ * 与 FLOATING_BTN_CLASS 同样的理由：共用一份，外观一致性由此在结构上成立。
+ * 微应用入口不在这一组里，它是单独一行、自带展开列表，见下方 MicroAppLauncher。
+ */
+const TOP_PILL_CLASS =
+  'flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors';
+
+/**
+ * 画布容器尺寸的"停稳"时长。
+ *
+ * `<main>` 上有 `transition-all duration-300`，所以侧边栏收放或微应用面板开合时，
+ * React Flow 测到的宽高会**连续 300ms 每帧都在变**。而智能跟随 effect 依赖这个尺寸：
+ * 不等待的话它会在每一帧都判定"当前节点出视野了"，于是连续下发十几次带动画的
+ * setCenter，镜头互相打架（表现为开面板时画布抖一下）。
+ * 取值比 300ms 略大，确保过渡真正结束。
+ */
+const PANE_SETTLE_MS = 320;
 
 export default function ChatCanvas() {
   // 直接订阅 sessionStore，避免 chatStore getter 的问题
@@ -179,6 +200,13 @@ export default function ChatCanvas() {
     setEdges(initialEdges);
   }, [initialNodes, initialEdges, setNodes, setEdges]);
 
+  // 画布尺寸最近一次发生变化的时刻。过渡动画期间尺寸每帧都在变，
+  // 用它来判断"现在还在动"（见 PANE_SETTLE_MS）。
+  const paneChangedAtRef = useRef(0);
+  useEffect(() => {
+    paneChangedAtRef.current = performance.now();
+  }, [paneWidth, paneHeight]);
+
   /**
    * 视口智能跟随。
    *
@@ -189,10 +217,12 @@ export default function ChatCanvas() {
    *
    * 关键：等 paneWidth/paneHeight 就绪后再算，否则容器尺寸为 0 会把节点算到角落；
    * 尺寸用「声明值」（resolveNodeSize），与布局用的是同一套数字，故居中恒准确。
+   *
+   * 抽成函数（而不是直接写在 effect 里）是为了让"尺寸停稳后"能由定时器再调一次：
+   * 那一次必须绕开 state 更新，否则重渲染会打断正在进行的过渡动画。
    */
-  useEffect(() => {
+  const focusCurrentNode = useCallback(() => {
     if (!session || !session.currentNodeId) return;
-    // React Flow 还没测量完容器，先不动作；尺寸就绪后本 effect 会重跑
     if (paneWidth <= 0 || paneHeight <= 0) return;
 
     const currentNodeId = session.currentNodeId;
@@ -228,6 +258,21 @@ export default function ChatCanvas() {
     session, initialNodes, measuredSizes, paneWidth, paneHeight,
     setCenter, getZoom, getViewport,
   ]);
+
+  useEffect(() => {
+    if (paneWidth <= 0 || paneHeight <= 0) return;
+
+    // 尺寸还在过渡中：等它停稳再算。
+    // 不等待的话，开合侧边栏/微应用面板的那 300ms 里每一帧都会判定"焦点出视野了"，
+    // 于是连续下发十几次带 400ms 动画的 setCenter，镜头互相打架。
+    const elapsed = performance.now() - paneChangedAtRef.current;
+    if (elapsed < PANE_SETTLE_MS) {
+      const timer = setTimeout(focusCurrentNode, PANE_SETTLE_MS - elapsed);
+      return () => clearTimeout(timer);
+    }
+
+    focusCurrentNode();
+  }, [paneWidth, paneHeight, focusCurrentNode]);
 
   /**
    * 在当前激活节点下新增一个子节点，并直接进入编辑态让用户能立刻打字。
@@ -344,6 +389,12 @@ export default function ChatCanvas() {
       return;
     }
 
+    // 焦点或选区在微应用面板里时，画布快捷键一律让路。
+    // 少了这一句会静默删数据：PDF 文本层是普通 div，在面板里选完一段原文后
+    // activeElement 仍是 body，上面所有守卫都拦不住 —— 按 Delete 删掉的是
+    // **画布上当前的节点**，按方向键会移动画布焦点，按 c 会切换收缩。
+    if (isMicroAppInteracting()) return;
+
     // 如果按下了 Ctrl 或 Cmd 键，不触发单键快捷键（避免与复制等操作冲突）
     if (e.ctrlKey || e.metaKey) {
       return;
@@ -441,10 +492,15 @@ export default function ChatCanvas() {
    *
    * 这里**一律拦截**浏览器原生查找（产品决策）。注意不能复用上面那个 handleKeyDown：
    * 它开头就 `if (e.ctrlKey || e.metaKey) return;`，专门把带修饰键的组合让出去。
+   *
+   * 唯一的例外是微应用面板：在那里按 Ctrl+F 的意思是"在这篇文章里找"，
+   * 此时不拦截、交给浏览器的原生查找 —— PDF 文字层是真实 DOM 文本，能命中也能高亮，
+   * 相当于白捡一个文档内查找，不必自己实现一遍。
    */
   useEffect(() => {
     const onFind = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return;
+      if (isMicroAppInteracting()) return;
       e.preventDefault();
       const ui = useUIStore.getState();
       const next = !ui.isSearchOpen;
@@ -636,7 +692,7 @@ export default function ChatCanvas() {
               exitSelectingMode();
               setSearchOpen(true);
             }}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors"
+            className={TOP_PILL_CLASS}
             title="搜索节点（Ctrl+F）"
           >
             <Search size={14} />
@@ -645,10 +701,8 @@ export default function ChatCanvas() {
           <button
             onClick={() => setShowGlobalPrompt(true)}
             className={cn(
-              'flex items-center gap-1.5 px-4 py-2 text-sm rounded-full border shadow-sm transition-colors',
-              hasGlobalPrompt
-                ? 'bg-leaf-50 text-leaf-700 border-leaf-200'
-                : 'bg-white text-gray-600 border-gray-200 hover:text-leaf-600 hover:bg-leaf-50'
+              TOP_PILL_CLASS,
+              hasGlobalPrompt && 'bg-leaf-50 text-leaf-700 border-leaf-200'
             )}
             title="编辑会话背景约束"
           >
@@ -662,12 +716,24 @@ export default function ChatCanvas() {
               setSearchOpen(false);
               enterSelectingMode();
             }}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-600 hover:text-leaf-600 bg-white hover:bg-leaf-50 rounded-full border border-gray-200 shadow-sm transition-colors"
+            className={TOP_PILL_CLASS}
             title="选择多个节点进行知识总结"
           >
             <Sparkles size={14} />
             节点总结
           </button>
+        </div>
+      )}
+
+      {/*
+        微应用入口。刻意**不放进上面那组**：那组是"当前会话的操作"，这个是"工具"，
+        而且它自己带一层展开列表（点开才看到 PDF 阅读）。
+        窄屏隐藏：并排会让画布和面板同时不可用（宿主组件里也会在变窄时自动收起）。
+        这里的渲染位置在会话守卫之后，所以"没有活跃会话就没有入口"是天然成立的。
+      */}
+      {!isSelectingMode && (
+        <div className="hidden lg:block absolute top-16 right-4 z-10">
+          <MicroAppLauncher />
         </div>
       )}
 

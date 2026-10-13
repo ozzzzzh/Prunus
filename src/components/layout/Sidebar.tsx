@@ -337,7 +337,9 @@ export default function Sidebar() {
   return (
     <div
       className={cn(
-        'absolute left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col transition-transform duration-300 ease-in-out z-10',
+        // z-30 高于微应用面板（z-20）：微应用跟对话走，所以面板开着时
+        // 侧边栏展开必须盖在面板之上，用户才能切会话。仍然低于各类弹窗（z-40/50/150）
+        'absolute left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col transition-transform duration-300 ease-in-out z-30',
         sidebarCollapsed ? '-translate-x-full' : 'translate-x-0'
       )}
     >

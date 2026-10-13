@@ -7,7 +7,9 @@
 import { useSessionStore } from '../store/sessionStore';
 import { useAPIConfigStore } from '../store/apiConfigStore';
 import { useFolderStore } from '../store/folderStore';
+import { useDialogStore } from '../store/dialogStore';
 import { repository } from '../repository';
+import { destroyAllPdfDocuments } from '../utils/pdfDocumentCache';
 
 // 是否启用自动保存
 let autoSaveEnabled = false;
@@ -53,6 +55,13 @@ export async function initPersistence(): Promise<void> {
     console.log('[Persistence] Initialized successfully');
   } catch (error) {
     console.error('[Persistence] Failed to initialize:', error);
+    // 这里不能只打日志。初始化失败的用户会看到一个"数据全没了"的空应用，
+    // 而唯一现实的原因是数据库版本升级被其它标签页挡住（见 utils/indexedDB.ts 的 onblocked）——
+    // 不说出来，用户既不知道原因也不知道该怎么办。
+    useDialogStore.getState().showToast(
+      (error as Error).message || '本地数据加载失败，请刷新重试',
+      { type: 'error' }
+    );
   }
 }
 
@@ -186,6 +195,10 @@ export async function importFromJSON(json: string): Promise<void> {
 export async function clearAllData(): Promise<void> {
   await repository.session.clear();
   await repository.folder.clear();
+  // PDF 文档库也要清。漏掉它的话，几 MB 的文件会永久留在 IndexedDB 里没人认领
+  await repository.pdf.clear();
+  // 内存里已解码的文档同样要销毁，否则重置之后还能从缓存里把旧文件读出来
+  destroyAllPdfDocuments();
 
   useSessionStore.getState().importSessions({});
   useFolderStore.getState().importItems({});

@@ -5,3 +5,4 @@
 export * from './node';
 export * from './session';
 export * from './folder';
+export * from './microApp';

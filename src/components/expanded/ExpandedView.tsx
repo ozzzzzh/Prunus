@@ -17,6 +17,7 @@ import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { cn } from '../../utils/cn';
+import { isMicroAppInteracting } from '../../utils/microAppFocus';
 import { FormatSubMenu } from '../chat/FormatToolbar';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
 
@@ -55,6 +56,10 @@ export default function ExpandedView() {
   // ESC 键退出
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 焦点/选区在微应用面板里时让路（与 ChatCanvas 同一理由）：
+      // 否则在 PDF 面板里按 Esc 会把展开视图关掉，用户只是想取消选中
+      if (isMicroAppInteracting()) return;
+
       if (e.key === 'Escape') {
         // 如果在编辑模式，先退出编辑
         if (editingNodeId) {

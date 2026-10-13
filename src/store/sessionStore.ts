@@ -5,7 +5,14 @@
  */
 
 import { create } from 'zustand';
-import type { PrunusNode, AIChatNode, NodeMarker, NodeAttachment } from '../types';
+import type {
+  PrunusNode,
+  AIChatNode,
+  NodeMarker,
+  NodeAttachment,
+  SessionMicroApps,
+  MicroAppId,
+} from '../types';
 import { ATTACHMENT_KEY } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
 
@@ -21,6 +28,13 @@ export interface ChatSession {
   updatedAt: number;
   pinned?: boolean;
   globalPrompt?: string;
+  /**
+   * 微应用状态（目前只有 PDF 阅读器：打开的是哪份文档、读到第几页）。
+   *
+   * 放在**会话**上是刻意的：微应用跟对话走，切会话切的就是这里读到的文档。
+   * 不初始化成 `{}` —— 缺省即"没开过"，少一处要维护的默认值。
+   */
+  microApps?: SessionMicroApps;
 }
 
 interface SessionState {
@@ -35,10 +49,36 @@ interface SessionState {
   togglePinSession: (sessionId: string) => void;
   setGlobalPrompt: (sessionId: string, prompt: string) => void;
 
+  // 微应用操作
+  /** 写某个会话的微应用状态；next 传 null 表示移除该微应用 */
+  setSessionMicroApp: <K extends MicroAppId>(
+    sessionId: string,
+    app: K,
+    next: SessionMicroApps[K] | null
+  ) => void;
+
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
+  /** 把一段摘录（原文 + 出处）建成当前焦点节点下的子节点。内容与 metadata 一次写入 */
+  addQuotedNode: (params: {
+    content: string;
+    parentId?: string;
+    metadata: Record<string, unknown>;
+  }) => string;
   addBranchedMessages: (role: 'user' | 'assistant' | 'system', contents: string[], parentId?: string) => void;
-  updateNodeContent: (nodeId: string, content: string, reasoning?: string) => void;
+  /**
+   * 更新节点正文。
+   *
+   * metadataPatch 是可选的第 4 个参数：值为 null 表示删除该键。
+   * 「编辑摘录节点」需要它 —— 用户改完内容后要清掉"原文摘录"标记，
+   * 让节点回到普通的 markdown/HTML 渲染路径，而这一步必须与正文写入同时发生。
+   */
+  updateNodeContent: (
+    nodeId: string,
+    content: string,
+    reasoning?: string,
+    metadataPatch?: Record<string, unknown>
+  ) => void;
   toggleNodeReasoningCollapse: (nodeId: string) => void;
   deleteNode: (nodeId: string) => void;
   splitNodeIntoBranches: (nodeId: string, newOutlineContent: string, branchesContent: string[]) => void;
@@ -63,6 +103,62 @@ interface SessionState {
 // ===== 工具函数 =====
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+/**
+ * 在指定父节点下插入一个子节点的公共逻辑。
+ *
+ * addMessage 与 addQuotedNode 要做的是同一件事：挂进父节点 childrenIds、
+ * 把父节点标记从 🍃 升级为 🪵、把 currentNodeId 指过去、更新 updatedAt。
+ * 抽出来是为了不让两处各写一遍 —— 这类重复改漏一边，症状会非常难查。
+ *
+ * 返回 null 表示前置条件不满足（没有活跃会话 / 父节点不存在），调用方应原样返回 state。
+ */
+function insertChildNode(
+  state: { sessions: Record<string, ChatSession>; activeSessionId: string | null },
+  parentId: string | null,
+  buildNode: (id: string) => PrunusNode
+): { sessionId: string; updatedSession: ChatSession; nodeId: string } | null {
+  const { activeSessionId, sessions } = state;
+  if (!activeSessionId || !parentId) return null;
+
+  const currentSession = sessions[activeSessionId];
+  if (!currentSession || !currentSession.nodes[parentId]) return null;
+
+  const nodeId = generateId();
+  const parentNode = currentSession.nodes[parentId] as AIChatNode;
+
+  const updatedSession: ChatSession = {
+    ...currentSession,
+    nodes: {
+      ...currentSession.nodes,
+      [parentId]: {
+        ...parentNode,
+        childrenIds: [...parentNode.childrenIds, nodeId],
+        marker: parentNode.marker === '🍃' ? '🪵' : parentNode.marker,
+        collapsed: false,
+        updatedAt: Date.now(),
+      },
+      [nodeId]: buildNode(nodeId),
+    },
+    currentNodeId: nodeId,
+    updatedAt: Date.now(),
+  };
+
+  return { sessionId: activeSessionId, updatedSession, nodeId };
+}
+
+/** 微应用状态的浅比较：字段完全相同就认为没变（用于跳过无意义的重排与持久化） */
+function sameMicroAppState(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+
+  return leftKeys.every((key) => left[key] === right[key]);
+}
 
 // ===== 初始数据 =====
 
@@ -201,55 +297,102 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     let createdNodeId = '';
 
     set((state) => {
-      const { activeSessionId, sessions } = state;
-      if (!activeSessionId) return state;
+      const session = state.activeSessionId ? state.sessions[state.activeSessionId] : null;
+      if (!session) return state;
 
-      const currentSession = sessions[activeSessionId];
-      const parentId = customParentId || currentSession.currentNodeId;
-      if (!parentId || !currentSession.nodes[parentId]) return state;
+      const inserted = insertChildNode(state, customParentId || session.currentNodeId, (id) =>
+        createAIChatNode({
+          id,
+          parentId: customParentId || session.currentNodeId,
+          role,
+          content,
+          marker: '🍃',
+        })
+      );
+      if (!inserted) return state;
 
-      const newNodeId = generateId();
-      createdNodeId = newNodeId;
-
-      const newNode = createAIChatNode({
-        id: newNodeId,
-        parentId,
-        role,
-        content,
-        marker: '🍃',
-      });
-
-      const parentNode = currentSession.nodes[parentId] as AIChatNode;
-      const parentMarker = parentNode.marker === '🍃' ? '🪵' : parentNode.marker;
-      const updatedParent: PrunusNode = {
-        ...parentNode,
-        childrenIds: [...parentNode.childrenIds, newNodeId],
-        marker: parentMarker,
-        collapsed: false,
-        updatedAt: Date.now(),
-      };
-
-      const updatedSession: ChatSession = {
-        ...currentSession,
-        nodes: {
-          ...currentSession.nodes,
-          [parentId]: updatedParent,
-          [newNodeId]: newNode,
-        },
-        currentNodeId: newNodeId,
-        updatedAt: Date.now(),
-      };
+      createdNodeId = inserted.nodeId;
 
       return {
         ...state,
         sessions: {
           ...state.sessions,
-          [activeSessionId]: updatedSession,
+          [inserted.sessionId]: inserted.updatedSession,
         },
       };
     });
 
     return createdNodeId;
+  },
+
+  /**
+   * 把一段摘录（目前来自 PDF 阅读器）变成当前焦点节点下的子节点。
+   *
+   * 与 addMessage 的唯一实质差别：**正文与来源 metadata 在同一次 set 里写入**。
+   * 这不是洁癖 —— MessageNode 的 arePropsEqual 按字段白名单比较，metadata 不在其中，
+   * 分两次写的话第二次更新会被判成"没变化"，角标永远刷不出来。
+   * 这个约束很隐蔽，所以宁可专门开一个动作，也不让调用方自己拼。
+   */
+  addQuotedNode: ({ content, parentId, metadata }) => {
+    let createdNodeId = '';
+
+    set((state) => {
+      const session = state.activeSessionId ? state.sessions[state.activeSessionId] : null;
+      if (!session) return state;
+
+      const parent = parentId || session.currentNodeId;
+
+      const inserted = insertChildNode(state, parent, (id) => ({
+        ...createAIChatNode({ id, parentId: parent, role: 'user', content, marker: '🍃' }),
+        // 覆盖 createAIChatNode 给的空 metadata：内容与出处必须同时到位
+        metadata: { ...metadata },
+      }));
+      if (!inserted) return state;
+
+      createdNodeId = inserted.nodeId;
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [inserted.sessionId]: inserted.updatedSession,
+        },
+      };
+    });
+
+    return createdNodeId;
+  },
+
+  setSessionMicroApp: (sessionId, app, next) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      const current = session.microApps?.[app];
+
+      const microApps = { ...session.microApps };
+      if (next === null) {
+        if (current === undefined) return state;
+        // 清除时删键而不是置 null，与 setNodeAttachment 同一套理由：
+        // 不留无用字段，也不会随导出文件带出去
+        delete microApps[app];
+      } else {
+        // 无实际变化就返回原 state。阅读器会周期性回写页码，而任何一次 session 写入
+        // 都会触发画布重排（布局 memo 依赖 session）与整库防抖保存，白耗很可观。
+        if (sameMicroAppState(current, next)) return state;
+        microApps[app] = next;
+      }
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          // 刻意不更新 updatedAt：读了几页不算"会话有改动"，
+          // 否则文件管理页按时间排序时会因为阅读而把对话顶到最前面
+          [sessionId]: { ...session, microApps },
+        },
+      };
+    });
   },
 
   addBranchedMessages: (role, contents, targetParentId) => {
@@ -307,7 +450,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateNodeContent: (nodeId, content, reasoning) => {
+  updateNodeContent: (nodeId, content, reasoning, metadataPatch) => {
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -315,6 +458,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const currentSession = sessions[activeSessionId];
       const node = currentSession.nodes[nodeId];
       if (!node) return state;
+
+      let metadata = node.metadata;
+      if (metadataPatch) {
+        // 与正文在同一次写入里改 metadata：分两次写会被 MessageNode 的
+        // arePropsEqual 判成"没变化"（它比较 metadata 的引用），改动就丢了
+        metadata = { ...node.metadata };
+        for (const [key, value] of Object.entries(metadataPatch)) {
+          if (value === null) delete metadata[key];
+          else metadata[key] = value;
+        }
+      }
 
       return {
         ...state,
@@ -327,6 +481,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               [nodeId]: {
                 ...node,
                 content,
+                metadata,
                 reasoning: reasoning !== undefined ? reasoning : (node as any).reasoning,
                 reasoningCollapsed: reasoning ? true : (node as any).reasoningCollapsed,
                 updatedAt: Date.now(),

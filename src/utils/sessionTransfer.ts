@@ -13,7 +13,16 @@
 
 import type { ChatSession } from '../store/sessionStore';
 
-/** 本文件自己的格式版本。与 persistenceService 里的 version 是两回事，不要混。 */
+/**
+ * 本文件自己的格式版本。与 persistenceService 里的 version 是两回事，不要混。
+ *
+ * 关于微应用（PDF 阅读器）：会话上的 `microApps` 与节点 `metadata` 里的出处标记
+ * 都是**整对象序列化/反序列化**的，没有字段白名单，所以它们自动随导出导入往返，
+ * 这里不需要任何专门处理。
+ *
+ * 但 PDF 文件本体**刻意不导出**：一份论文几 MB，塞进给人分享的 JSON 里既笨重又没道理。
+ * 换设备后靠内容指纹（docId）重新关联 —— 用户重新上传同一份文件即可恢复阅读位置与引用。
+ */
 const EXPORT_VERSION = 1;
 
 /** 文件用途标记，便于导入时快速判断「这是不是 Prunus 的对话文件」 */

@@ -1035,6 +1035,7 @@ function MessageNode({ data }: MessageNodeProps) {
           附件标签：让用户一眼看出**哪个节点**带了文档。
           没有这个的话，附件在画布上完全不可见，用户会困惑"我传的文档去哪了"。
           只显示名字与字数，正文不渲染 —— 整篇文档铺在卡片上会毁掉可读性。
+          不再有「已截断」徽标：超限的文件在解析阶段就被拒绝，能存下来的正文必然是完整的。
         */}
         {nodeAttachment && !isEditing && (
           <div className="mb-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-leaf-50 border border-leaf-100 text-[11px] text-leaf-700 shrink-0">
@@ -1043,11 +1044,8 @@ function MessageNode({ data }: MessageNodeProps) {
               {nodeAttachment.name}
             </span>
             <span className="text-leaf-500 flex-shrink-0">
-              {nodeAttachment.totalChars.toLocaleString()} 字
+              {nodeAttachment.text.length.toLocaleString()} 字
             </span>
-            {nodeAttachment.truncated && (
-              <span className="text-amber-700 bg-amber-100 px-1 rounded flex-shrink-0">已截断</span>
-            )}
           </div>
         )}
 

@@ -289,7 +289,9 @@ export default function ChatCanvas() {
 
     // 复用 addMessage：它负责把新节点挂进父节点的 childrenIds、把父节点 marker
     // 从 🍃 升级为 🪵、并把 currentNodeId 指向新节点（视口随之居中，见上方跟随 effect）。
-    // role 用 'user'：这是用户手写的节点，而 isNodeEditable 只对 user 放行编辑。
+    // role 用 'user'：这是用户手写的内容，标成 user 才符合语义（卡片按角色显示图标）。
+    // 注意编辑**不**按角色限制：任何非流式节点双击都能进编辑态。
+    // types/node.ts 里的 isNodeEditable 是死代码，全项目没有调用点 —— 别拿它当守卫。
     const newNodeId = addMessage('user', '', targetNodeId);
     if (!newNodeId) return;
 

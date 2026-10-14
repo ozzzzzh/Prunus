@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, CornerDownLeft, Loader2, MessageSquare, Paperclip, X } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -39,7 +39,12 @@ export default function ChatInput() {
   const [isParsing, setIsParsing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const attachmentTokens = attachment ? estimateTokens(attachment.text) : 0;
+  // memo 是有必要的：estimateTokens 要对整篇正文跑正则，而 ChatInput 每次敲键都会重渲染。
+  // 上限提到 60k tokens 之后，一篇文章是几十万字符，逐键重算不再是可忽略的开销。
+  const attachmentTokens = useMemo(
+    () => (attachment ? estimateTokens(attachment.text) : 0),
+    [attachment]
+  );
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -56,16 +61,12 @@ export default function ChatInput() {
         name: parsed.name,
         kind: parsed.kind,
         size: parsed.size,
-        totalChars: parsed.totalChars,
-        truncated: parsed.truncated,
         text: parsed.text,
       });
-      const notes = [`已读取「${parsed.name}」`, `${parsed.totalChars.toLocaleString()} 字`];
+      // 报 token 而不是字数：那才是决定成本和上下文占用的数，也和超限拒绝用的是同一个口径
+      const notes = [`已读取「${parsed.name}」`, `约 ${estimateTokens(parsed.text).toLocaleString()} tokens`];
       if (parsed.pages) notes.push(`${parsed.pages} 页`);
-      if (parsed.truncated) notes.push(`内容过长，已截断至 ${parsed.text.length.toLocaleString()} 字`);
-      useDialogStore.getState().showToast(notes.join(' · '), {
-        type: parsed.truncated ? 'info' : 'success',
-      });
+      useDialogStore.getState().showToast(notes.join(' · '), { type: 'success' });
     } catch (err) {
       // documentParser 抛出的都是可读的中文提示，直接透出
       useDialogStore.getState().showToast((err as Error).message || '文件解析失败', { type: 'error' });
@@ -297,14 +298,15 @@ export default function ChatInput() {
             <span className="text-leaf-800 truncate max-w-[200px]" title={attachment.name}>
               {attachment.name}
             </span>
+            {/*
+              两个数字必须描述**同一段文本**（这里都是 attachment.text 的完整正文）。
+              此前"字数取截断前的、token 取截断后的"并排显示，会让人读出
+              "38,795 字 ≈ 5,000 tokens"这种相差 4 倍的结论 —— 而那正是
+              "只支持 5000 tokens" 这个误解的来源。
+            */}
             <span className="text-leaf-600 flex-shrink-0">
-              {attachment.totalChars.toLocaleString()} 字
+              {attachment.text.length.toLocaleString()} 字
             </span>
-            {attachment.truncated && (
-              <span className="text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded flex-shrink-0">
-                已截断
-              </span>
-            )}
             {/*
               超过阈值时变色提醒。这是额度最容易被意外耗光的地方 ——
               附件会随本分支的每条后续消息重复计入。

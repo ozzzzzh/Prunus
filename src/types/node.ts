@@ -263,10 +263,14 @@ export interface NodeAttachment {
   kind: DocKind;
   /** 原始文件字节数 */
   size: number;
-  /** 截断前的字符数 */
-  totalChars: number;
-  truncated: boolean;
-  /** 解析出的正文（可能已截断） */
+  /**
+   * 解析出的完整正文。
+   *
+   * 不再有 totalChars / truncated 两个字段：超限的文件在解析阶段就被拒绝，
+   * 能走到这里的正文必然是完整的 —— 留着那两个字段只会让人以为还存在截断逻辑。
+   * 字符数与 token 数都是可推导的（text.length / estimateTokens(text)），
+   * 冗余存储反而会各自漂移。
+   */
   text: string;
 }
 
@@ -287,9 +291,7 @@ export function getNodeAttachment(node: PrunusNode): NodeAttachment | null {
   if (
     typeof a.name !== 'string' ||
     (a.kind !== 'text' && a.kind !== 'docx' && a.kind !== 'pdf') ||
-    typeof a.text !== 'string' ||
-    typeof a.totalChars !== 'number' ||
-    typeof a.truncated !== 'boolean'
+    typeof a.text !== 'string'
   ) {
     return null;
   }
@@ -299,8 +301,8 @@ export function getNodeAttachment(node: PrunusNode): NodeAttachment | null {
     kind: a.kind,
     // size 不是关键字段，缺失时补 0 即可，不必因此丢掉整个附件
     size: typeof a.size === 'number' ? a.size : 0,
-    totalChars: a.totalChars,
-    truncated: a.truncated,
+    // 旧数据里可能还留着 totalChars / truncated，忽略即可 ——
+    // 它们已经没有任何读取方，额外字段不会造成问题
     text: a.text,
   };
 }

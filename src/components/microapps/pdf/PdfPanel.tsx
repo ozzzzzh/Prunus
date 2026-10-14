@@ -11,8 +11,19 @@
  *    由主应用决定节点长什么样
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileText, Loader2, Minus, Plus, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  CornerDownRight,
+  FileText,
+  Loader2,
+  Minus,
+  Plus,
+  Sprout,
+  Upload,
+  X,
+} from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { useSessionStore } from '../../../store/sessionStore';
 import { useUIStore } from '../../../store/uiStore';
@@ -35,6 +46,7 @@ import {
 } from '../../../utils/pdfPaging';
 import { buildPdfQuote, PDF_QUOTE_MAX_CHARS, looksGarbled } from '../../../utils/pdfSelection';
 import type { PdfHighlight } from '../../../types/microApp';
+import type { ReactNode } from 'react';
 import PdfPageView from './PdfPageView';
 
 interface PdfPanelProps {
@@ -67,18 +79,36 @@ const ZOOM_STEP = 1.25;
 /** 稳定的空数组：直接写 `[]` 会让 memo 的页面每次渲染都判定 props 变了 */
 const EMPTY_HIGHLIGHTS: PdfHighlight[] = [];
 
+/** 气泡与选区之间的间距 */
+const BUBBLE_GAP = 10;
+/** 气泡与面板边缘的最小留白 */
+const BUBBLE_PAD = 8;
+
 interface SelectionBubble {
   text: string;
   /** 1-based */
   page: number;
-  left: number;
-  top: number;
+  /**
+   * 以下均为相对气泡包含块（面板 body，见下面 setBubble 处的说明）的像素值。
+   *
+   * 这里只记**几何**、不记最终位置：气泡摆哪取决于它自己的高度（上方放不下要翻到下方），
+   * 而高度要等它渲染出来才知道，所以位置留到渲染时算（见 bubblePos）。
+   */
+  centerX: number;
+  selTop: number;
+  selBottom: number;
+  hostW: number;
+  hostH: number;
   garbled: boolean;
 }
 
 export default function PdfPanel({ sessionId }: PdfPanelProps) {
   const pdfState = useSessionStore((s) => s.sessions[sessionId]?.microApps?.pdf);
   const sessionNodes = useSessionStore((s) => s.sessions[sessionId]?.nodes);
+  // 气泡上两个按钮各自的目标节点。订阅而不是 getState()：hover 提示要如实说明
+  // "现在会挂到哪个节点上"，取值期间用户切了节点，提示就得跟着变。
+  const currentNodeId = useSessionStore((s) => s.sessions[sessionId]?.currentNodeId ?? null);
+  const rootNodeId = useSessionStore((s) => s.sessions[sessionId]?.rootNodeId ?? null);
   const setSessionMicroApp = useSessionStore((s) => s.setSessionMicroApp);
   const addQuotedNode = useSessionStore((s) => s.addQuotedNode);
   const setActiveMicroApp = useUIStore((s) => s.setActiveMicroApp);
@@ -111,6 +141,23 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [range, setRange] = useState<[number, number]>([0, -1]);
   const [bubble, setBubble] = useState<SelectionBubble | null>(null);
+  /**
+   * 气泡实测尺寸。
+   *
+   * 必须实测、不能写死常量：按钮文案一改宽度就变，用估的夹取量会让气泡从面板边缘溢出去；
+   * 而"选区上方放不下就翻到下方"这个判断也依赖真实高度。
+   * 用 useLayoutEffect 在浏览器绘制前量好并回写，所以定位在同一帧内完成，看不到跳动。
+   */
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const [bubbleSize, setBubbleSize] = useState({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const el = bubbleRef.current;
+    if (!el) return;
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
+    setBubbleSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+  }, [bubble]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -333,6 +380,24 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
 
   // ===== 滚动：当前页 + 需要挂载的页 =====
 
+  /**
+   * 按当前滚动位置算出「可见页范围」与「当前页」。
+   *
+   * 抽成独立函数是因为它有两个触发源：滚动，以及分页几何刚就绪的那一刻（见下面那个 effect）。
+   */
+  const syncVisibleRange = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || offsets.length === 0) return;
+
+    const { scrollTop, clientHeight } = el;
+
+    const [start, end] = visibleRange(offsets, heights, scrollTop, clientHeight);
+    setRange((prev) => (prev[0] === start && prev[1] === end ? prev : [start, end]));
+
+    const page = pageAtOffset(offsets, scrollTop, clientHeight) + 1;
+    setCurrentPage((prev) => (prev === page ? prev : page));
+  }, [offsets, heights]);
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el || rafRef.current !== null) return;
@@ -340,15 +405,9 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     // 合并到下一帧：滚动事件比帧还密，逐次计算纯属浪费
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
-      const { scrollTop, clientHeight } = el;
-
-      const [start, end] = visibleRange(offsets, heights, scrollTop, clientHeight);
-      setRange((prev) => (prev[0] === start && prev[1] === end ? prev : [start, end]));
-
-      const page = pageAtOffset(offsets, scrollTop, clientHeight) + 1;
-      setCurrentPage((prev) => (prev === page ? prev : page));
+      syncVisibleRange();
     });
-  }, [offsets, heights]);
+  }, [syncVisibleRange]);
 
   useEffect(() => {
     return () => {
@@ -396,6 +455,20 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     el.scrollTop = Math.max(0, offsets[Math.min(page, offsets.length) - 1] - PAGE_TOP_PADDING);
   }, [doc, docId, offsets, pdfState]);
 
+  /**
+   * 分页几何就绪后立刻算一次可见范围。
+   *
+   * 没有这一步，页面要等到**第一次 scroll 事件**才会挂载，而刚打开一份文档时根本不会
+   * 发生滚动：内容还没渲染出来，容器要么不可滚动（单页短文档）、要么滚动位置没变，
+   * 两种情况浏览器都不发 scroll。表现是打开 PDF 后只剩页码占位符，手动滚一下内容才出来。
+   *
+   * 必须排在"回到上次读到的位置"那个 effect **之后**（声明顺序即执行顺序）：它先把
+   * scrollTop 摆到上次的页，这里再量，才能一次就落在正确的页上，不会先闪一下第一页。
+   */
+  useEffect(() => {
+    syncVisibleRange();
+  }, [syncVisibleRange]);
+
   // 节点上的页码角标 → 跳到这里
   useEffect(() => {
     if (!pendingJump || pendingJump.docId !== docId || offsets.length === 0) return;
@@ -438,56 +511,82 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     setBubble({
       text: selection.toString(),
       page,
-      // 气泡贴着选区上方居中，并夹在面板内，避免选到页边时飘出去
-      left: Math.min(Math.max(rect.left - hostRect.left + rect.width / 2, 96), Math.max(hostRect.width - 96, 96)),
-      top: Math.max(rect.top - hostRect.top - 10, 8),
+      centerX: rect.left - hostRect.left + rect.width / 2,
+      selTop: rect.top - hostRect.top,
+      selBottom: rect.bottom - hostRect.top,
+      hostW: hostRect.width,
+      hostH: hostRect.height,
       garbled: looksGarbled(selection.toString()),
     });
   }, []);
 
-  const handleCreateNode = useCallback(() => {
-    if (!bubble || !docId) return;
+  /**
+   * 把当前选区建成画布节点。
+   *
+   * attachTo 决定挂到哪：'current' 挂在用户正看着的激活节点下（默认动作），
+   * 'root' 挂在根节点下（想让这条摘录另起一条独立链路时用）。
+   */
+  const handleCreateNode = useCallback(
+    (attachTo: 'current' | 'root') => {
+      if (!bubble || !docId) return;
 
-    const quote = buildPdfQuote({
-      text: bubble.text,
-      page: bubble.page,
-      docId,
-      docName: pdfState?.name,
-    });
+      const parentId = attachTo === 'root' ? rootNodeId : currentNodeId;
 
-    // 先把选区在页面上的位置算出来，再建节点 —— 建完后要清空选区，那时就算不到了。
-    const rects = collectHighlightRects(bubble.page);
-
-    const nodeId = addQuotedNode({ content: quote.content, metadata: quote.metadata });
-    window.getSelection()?.removeAllRanges();
-    setBubble(null);
-
-    if (!nodeId) {
-      useDialogStore.getState().showToast('当前没有可写入的会话', { type: 'error' });
-      return;
-    }
-
-    // 摘录到画布后在原文上留一层记号笔：下次翻到这里就知道"这段已经进画布了"
-    if (rects.length > 0) {
-      const latest = useSessionStore.getState().sessions[sessionId]?.microApps?.pdf;
-      if (latest) {
-        setSessionMicroApp(sessionId, 'pdf', {
-          ...latest,
-          highlights: [
-            ...(latest.highlights ?? []),
-            { nodeId, docId, page: bubble.page, rects },
-          ],
-        });
+      if (!parentId || !sessionNodes?.[parentId]) {
+        useDialogStore.getState().showToast(
+          attachTo === 'root' ? '这个会话还没有根节点' : '这个会话还没有可挂接的当前节点',
+          { type: 'error' }
+        );
+        return;
       }
-    }
 
-    if (quote.truncated) {
-      useDialogStore.getState().showToast(
-        `选区过长，已摘取前 ${PDF_QUOTE_MAX_CHARS} 字`,
-        { type: 'info' }
-      );
-    }
-  }, [bubble, docId, pdfState, addQuotedNode, sessionId, setSessionMicroApp]);
+      const quote = buildPdfQuote({
+        text: bubble.text,
+        page: bubble.page,
+        docId,
+        docName: pdfState?.name,
+      });
+
+      // 先把选区在页面上的位置算出来，再建节点 —— 建完后要清空选区，那时就算不到了。
+      const rects = collectHighlightRects(bubble.page);
+
+      const nodeId = addQuotedNode({ content: quote.content, parentId, metadata: quote.metadata });
+      window.getSelection()?.removeAllRanges();
+      setBubble(null);
+
+      if (!nodeId) {
+        useDialogStore.getState().showToast('当前没有可写入的会话', { type: 'error' });
+        return;
+      }
+
+      // 摘录到画布后在原文上留一层记号笔：下次翻到这里就知道"这段已经进画布了"
+      if (rects.length > 0) {
+        const latest = useSessionStore.getState().sessions[sessionId]?.microApps?.pdf;
+        if (latest) {
+          setSessionMicroApp(sessionId, 'pdf', {
+            ...latest,
+            highlights: [
+              ...(latest.highlights ?? []),
+              { nodeId, docId, page: bubble.page, rects },
+            ],
+          });
+        }
+      }
+
+      if (quote.truncated) {
+        useDialogStore.getState().showToast(
+          `选区过长，已摘取前 ${PDF_QUOTE_MAX_CHARS} 字`,
+          { type: 'info' }
+        );
+      }
+    },
+    [bubble, docId, pdfState, addQuotedNode, sessionId, setSessionMicroApp, currentNodeId, rootNodeId, sessionNodes]
+  );
+
+  // 两个按钮的目标是否可用。不可用时按钮置灰、提示也换成原因，
+  // 否则点下去只会弹一个 toast，而按钮看上去还是能点的。
+  const hasCurrentTarget = Boolean(currentNodeId && sessionNodes?.[currentNodeId]);
+  const hasRootTarget = Boolean(rootNodeId && sessionNodes?.[rootNodeId]);
 
   /**
    * 把当前选区在某一页上的位置算成归一化矩形。
@@ -610,6 +709,29 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
   // ===== 渲染 =====
 
   const pageCount = doc?.numPages ?? 0;
+
+  /**
+   * 气泡摆放：**优先贴选区上方，上方放不下才翻到下方** —— 两种情况都不压住选区。
+   *
+   * 垂直方向用 bottom 而不是 top 是关键：`bottom: hostH - selTop + GAP` 把气泡的
+   * **下边缘**钉在选区上方，因此不依赖气泡高度就保证不遮挡（高度只在决定要不要翻转时才用得上）。
+   * 水平方向继续居中（配合 -translate-x-1/2），夹取量用实测半宽，避免贴边时溢出面板。
+   */
+  const bubblePos = useMemo(() => {
+    if (!bubble) return null;
+
+    const halfW = bubbleSize.width / 2;
+    const lower = halfW + BUBBLE_PAD;
+    // 气泡比面板还宽时 upper 会小于 lower，取 lower 兜底，避免夹取区间反向
+    const upper = Math.max(bubble.hostW - halfW - BUBBLE_PAD, lower);
+    const left = Math.min(Math.max(bubble.centerX, lower), upper);
+
+    const placeAbove = bubble.selTop - bubbleSize.height - BUBBLE_GAP >= BUBBLE_PAD;
+
+    return placeAbove
+      ? { left, bottom: bubble.hostH - bubble.selTop + BUBBLE_GAP }
+      : { left, top: bubble.selBottom + BUBBLE_GAP };
+  }, [bubble, bubbleSize]);
 
   return (
     <div className="flex flex-col h-full">
@@ -809,39 +931,72 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
           </div>
         )}
 
-        {/* 选中后浮出的操作 */}
-        {bubble && (
+        {/* 选中后浮出的操作：两个图标按钮，hover 变绿并说明会挂到哪个节点上 */}
+        {bubble && bubblePos && (
           <div
-            className="absolute z-20 -translate-x-1/2 flex flex-col items-center gap-1"
-            style={{ left: bubble.left, top: bubble.top }}
+            ref={bubbleRef}
+            style={bubblePos}
+            className="absolute z-20 -translate-x-1/2 flex items-center gap-0.5 px-1 py-1 rounded-lg bg-gray-900 text-white shadow-lg"
           >
-            <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-gray-900 text-white shadow-lg">
-              <button
-                onClick={handleCreateNode}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-leaf-600 hover:bg-leaf-500 transition-colors"
-              >
-                <Plus size={12} />
-                在画布中建立节点
-                <span className="text-leaf-100">第 {bubble.page} 页</span>
-              </button>
-              {bubble.garbled && (
-                <span className="text-[10px] text-amber-300 pr-1" title="这份 PDF 缺少字符映射，取到的文字可能是乱码">
-                  文字可能乱码
-                </span>
-              )}
-            </div>
+            <AttachButton
+              icon={<CornerDownRight size={14} />}
+              tip={hasCurrentTarget ? '在当前节点下创建子节点' : '没有可挂接的当前节点'}
+              disabled={!hasCurrentTarget}
+              onClick={() => handleCreateNode('current')}
+            />
+            <AttachButton
+              icon={<Sprout size={14} />}
+              tip={hasRootTarget ? '在根节点下创建子节点' : '没有可挂接的根节点'}
+              disabled={!hasRootTarget}
+              onClick={() => handleCreateNode('root')}
+            />
 
-            {/*
-              在这里说明 Ctrl+点击，是因为别处没法说明：标记在没按 Ctrl 时不吃鼠标事件
-              （否则"在已标记区域里选字"这条路就断了），所以它既没有 hover 提示、
-              也显示不出 tooltip。而用户正是在这一刻创建标记 —— 这是唯一的天然宣导位。
-            */}
-            <span className="px-2 py-1 rounded bg-gray-900/85 text-white text-[10px] whitespace-nowrap shadow-lg">
-              建立后按住 <kbd className="px-1 rounded bg-white/20">Ctrl</kbd> 点击黄色标记可回到该节点
-            </span>
+            {/* 乱码警告是条件性的（只在 PDF 缺字符映射时出现），与上面被删掉的页码角标不同：
+                它是在提醒"你正要摘的这段字本身可能是坏的"，不该跟着一起省掉。 */}
+            {bubble.garbled && (
+              <span className="text-[10px] text-amber-300 pr-1" title="这份 PDF 缺少字符映射，取到的文字可能是乱码">
+                文字可能乱码
+              </span>
+            )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 气泡里的图标按钮。
+ *
+ * 提示用绝对定位挂在按钮**上方**，两个原因：
+ * - 绝对定位不参与布局，所以 hover 不会改变气泡尺寸 —— 气泡是按自身高度决定
+ *   "贴选区上方还是翻到下方"的，尺寸一变就会自己抖一下
+ * - 放上方而不是下方，是因为下方紧挨着选区（这个气泡存在的意义就是不挡住选区）
+ */
+function AttachButton({
+  icon,
+  tip,
+  disabled,
+  onClick,
+}: {
+  icon: ReactNode;
+  tip: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={tip}
+        className="flex items-center justify-center p-1.5 rounded-md text-gray-300 hover:bg-leaf-600 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors"
+      >
+        {icon}
+      </button>
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block whitespace-nowrap rounded bg-gray-900/95 px-2 py-1 text-[10px] text-white shadow-lg">
+        {tip}
+      </span>
     </div>
   );
 }

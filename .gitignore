@@ -9,7 +9,8 @@ lerna-debug.log*
 .out
 
 node_modules
-docs
+# 注意：docs/ 刻意**不**忽略 —— 里面的 DECISIONS / ARCHITECTURE / HANDOFF
+# 就是为「跨机器、跨会话接续开发」写的，忽略掉它们等于让交接文档无法交接。
 dist
 dist-ssr
 *.local

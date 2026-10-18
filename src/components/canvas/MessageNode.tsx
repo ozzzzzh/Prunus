@@ -1001,7 +1001,12 @@ function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {isActive && !isUser && !isSelectingMode && (
+            {/*
+              标记按钮对所有角色开放（含 user 节点）。
+              其余下游逻辑本来就不分角色：徽标渲染、setNodeMarker、以及"有 marker 才能收起"
+              都是按 marker 有无判断的，所以这里去掉角色限制不需要额外改动。
+            */}
+            {isActive && !isSelectingMode && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();

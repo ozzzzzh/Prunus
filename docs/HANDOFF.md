@@ -315,7 +315,7 @@ npm run preview  # 预览构建产物
 
 **微应用（PDF）额外注意**：
 
-- 打开入口是 `button[title="打开微应用"]`，然后按**标题**（`论文阅读`）点列表项 ——
+- 打开入口是 `button[title="打开微应用"]`，然后按**菜单项文案**（`Prunus Paper`，即 `registry.tsx` 里的 `title`）点列表项 ——
   不是 `label`（`PDF`），那个只用在按钮上，列表里从不出现
 - 用 `setInputFiles` 载入 `input[type="file"][accept*="pdf"]`
 - IndexedDB 的 `sessions` store 里**不止一个会话**（启动时会另建一个空默认会话），

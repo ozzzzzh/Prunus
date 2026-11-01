@@ -18,6 +18,7 @@ import ExpandedView from './components/expanded/ExpandedView';
 import { useSessionStore } from './store/sessionStore';
 import { useFolderStore } from './store/folderStore';
 import { useUIStore } from './store/uiStore';
+import { useUndoRedo } from './hooks/useUndoRedo';
 import { useAPIConfigStore } from './store/apiConfigStore';
 import { initPersistence, enableAutoSave } from './services/persistenceService';
 import { requestFreeToken, communityV1Url, hasCommunityBackend } from './utils/cdkService';
@@ -32,6 +33,9 @@ function App() {
   const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed);
   const toggleSidebar = useUIStore(state => state.toggleSidebar);
   const expandedNodeId = useUIStore(state => state.expandedNodeId);
+
+  // 撤销/重做快捷键：只在画布/链路编辑里生效，文件管理页与输入框内不接管
+  useUndoRedo(currentPage === 'canvas');
 
   const folderItems = useFolderStore(state => state.items);
   const activeMicroApp = useUIStore(state => state.activeMicroApp);

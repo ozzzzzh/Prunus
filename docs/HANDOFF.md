@@ -190,9 +190,9 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 
 | 模块 | 能力 | 入口 |
 |---|---|---|
-| **画布** | 节点导航、镜头智能跟随与一键聚焦、节点收起/展开、一键收缩其余节点、新增子节点 | `ChatCanvas.tsx` |
+| **画布** | 节点导航、镜头智能跟随与一键聚焦、节点收起/展开、一键收缩其余节点、新增子节点、**撤销/重做**（Ctrl+Z / Ctrl+Shift+Z） | `ChatCanvas.tsx` + `hooks/useUndoRedo` |
 | | 滚轮/双击缩放**刻意禁用**，画布只做平移（避免与文本选择、卡片内滚动冲突）；`nodesDraggable`/`nodesConnectable`/`elementsSelectable` 全为 false | `ChatCanvas.tsx` |
-| **节点卡片** | 双击编辑、富文本（粗/斜/下划线/删除线/6 字色/5 高亮色）、标记、长按 0.3s 角标缩放、右键菜单（摘取-复制/移动）、Branch Out、思考过程折叠、PDF 出处角标、附件角标 | `MessageNode.tsx` |
+| **节点卡片** | 双击编辑、富文本（粗/斜/下划线/删除线/6 字色/5 高亮色）、**选中文字后浮出的格式/摘取工具条**、标记、长按 0.3s 角标缩放、右键菜单（摘取-复制/移动）、Branch Out、思考过程折叠、PDF 出处角标、附件角标 | `MessageNode.tsx` + `common/SelectionToolbar` |
 | **输入框** | 发送（Enter）/ 换行（Shift+Enter）、附件上传与解析、大附件额度确认、"Replying to" 头、编辑态 | `ChatInput.tsx` |
 | **节点总结** | 多选节点 → LLM 凝练成结构化总结（可加重自定义要求、可重生成、一键复制） | 画布右上「节点总结」→ `SummaryModal` |
 | **会话背景** | 为单个会话设全局约束，附加到每条 system prompt 后（只影响之后的回复） | 画布右上「会话背景」→ `GlobalPromptModal` |
@@ -292,7 +292,49 @@ Vite 按对象键的**插入顺序**匹配，`/api/` 在前会吞掉另外两个
 配套：图片走**独立的视觉配置**（`apiConfigStore.vision`），未配置时回退到聊天配置；
 只有真的带了图才切换连接，纯文本请求行为不变。
 
-### 4.9 不可变引用是承重结构
+### 4.9 选中工具条的三条硬约束
+
+`components/common/SelectionToolbar.tsx` 同时服务画布节点与链路编辑。改它之前记住：
+
+1. **必须 portal 到 `document.body`**。画布节点在 React Flow 的 transform 容器里，
+   而**有 transform 的祖先会成为 `position: fixed` 的包含块** —— 不 portal 会整体偏移
+   （图片预览灯箱踩过同一个坑）。
+2. **所有按钮的 `onMouseDown` 都要 `preventDefault()`**。否则一点按钮编辑器就失焦、
+   选区塌陷，格式会作用到空选区。
+3. **`selectionchange` 是全局事件**，必须用 `editorRef.current.contains(...)` 过滤，
+   否则在 PDF 文本层里选字也会弹出格式条。
+
+另外：底部那套 `FormatToolbar` **已删除**（连同 `chat/FormatToolbar.tsx`），
+编辑工具现在只有浮条一个入口。右键菜单里的摘取暂时保留，与浮条并存。
+
+### 4.10 撤销/重做只记录"改节点"的操作
+
+`store/historyStore.ts` 存的是 **`ChatSession` 的快照引用，不做深拷贝** ——
+因为 sessionStore 全程不可变更新，旧 state 引用本身就是一份完整快照，
+且结构共享让一步历史只占用"变化路径"的内存。
+
+四条规则，改动时别破坏：
+
+1. **只有会改节点树的 action 调 `pushHistory(get)`**（13 个）。`focusNode`、
+   `setSessionMicroApp` 这类导航/阅读状态**刻意不记录** —— 否则 Ctrl+Z 会跳镜头。
+   新增 action 时想清楚它是不是"编辑"。
+2. **500ms 时间窗合并**：一次用户操作常触发多次写入（发消息 = 建用户节点 + 挂附件 +
+   建 assistant 节点），不合并的话要按好几次 Ctrl+Z。合并保留的是**这一组之前**的快照。
+3. **编辑器里要分流**：焦点在 contenteditable 时，`hooks/useUndoRedo` 按
+   `data-editor-dirty` + 内容判空决定：
+   - 敲过字 → 交给浏览器原生（字符级回退）
+   - 有内容但没敲过（例如双击打开已有节点）→ 也交给原生（此时是空操作）
+   - **空的且从未输入过 → 接管** —— 这正是"新增子节点后自动进编辑态"的场景：
+     原生撤销无事可做，只有接管才能撤销"新增节点"这一步
+   `data-editor-dirty` 由编辑器 `onInput` 命令式写入，并且**是粘性的**（敲过一次就一直 true，
+   直到重新进入编辑态才复位）；否则用户打完字再删空，下一次 Ctrl+Z 会跳过原生去撤销节点创建，
+   反而丢了刚打的字。
+4. **生成中禁用**：流式写入还在进行时撤销会被随后的 `updateNodeContent` 覆盖。
+
+副作用（可接受，但要知道）：撤销不恢复 UI 状态（选中/滚动/编辑态）；
+撤销截图不会删除 IndexedDB 里的图片 blob（只还原引用）。
+
+### 4.11 不可变引用是承重结构
 
 项目大量依赖"引用变没变"来决定是否重渲染 / 是否持久化。
 **读-改-写必须在一次 `set` 里完成**；"返回原 state 引用"是被当作显式跳过信号在用的。

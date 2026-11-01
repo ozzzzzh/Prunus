@@ -1,5 +1,5 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera, Copy, Scissors } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
 import { isAIChatNode, getNodeAttachment, getNodePdfRef, getNodeImageRef, isPdfQuote, PDF_QUOTE_KEY } from '../../types';
@@ -19,6 +19,7 @@ import { splitContentLocally } from '../../utils/contentSplit';
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { markdownToHtml, escapeHtml, getSelectedHTML, saveSelectionRange, restoreSelectionRange, deleteSelection, deleteHTMLContent } from '../../utils/richtext';
+import SelectionToolbar from '../common/SelectionToolbar';
 
 const MARKER_OPTIONS = [
   { emoji: '🍃', label: 'Leaf' },
@@ -555,9 +556,15 @@ function MessageNode({ data }: MessageNodeProps) {
     setShowContextMenu(false);
   };
 
-  // 摘取操作 - 复制模式
-  const handleExtractCopy = () => {
-    if (!savedSelection) return;
+  /**
+   * 摘取操作 - 复制模式。
+   *
+   * selectionHTML 可选：右键菜单走 state 里存的选区，
+   * 浮条则在点击瞬间直接传入当前选区（见下方 SelectionToolbar 的接线）。
+   */
+  const handleExtractCopy = (selectionHTML?: string) => {
+    const html = selectionHTML ?? savedSelection;
+    if (!html) return;
 
     // 创建新节点作为当前节点的兄弟节点
     const parentId = node.parentId ?? undefined;
@@ -566,7 +573,7 @@ function MessageNode({ data }: MessageNodeProps) {
     const role = isAIChat ? node.role : 'user';
 
     // 创建新节点
-    const newNodeId = useSessionStore.getState().addMessage(role, savedSelection, parentId);
+    const newNodeId = useSessionStore.getState().addMessage(role, html, parentId);
 
     // 清空保存的选区
     setSavedSelection('');
@@ -581,9 +588,14 @@ function MessageNode({ data }: MessageNodeProps) {
     setShowContextMenu(false);
   };
 
-  // 摘取操作 - 移动模式
-  const handleExtractCut = () => {
-    if (!savedSelection || !editRef.current) return;
+  // 摘取操作 - 移动模式（两个可选参数的理由同上）
+  const handleExtractCut = (
+    selectionHTML?: string,
+    rangeInfo?: ReturnType<typeof saveSelectionRange>
+  ) => {
+    const html = selectionHTML ?? savedSelection;
+    const range = rangeInfo !== undefined ? rangeInfo : savedRange;
+    if (!html || !editRef.current) return;
 
     const editorEl = editRef.current;
 
@@ -591,12 +603,12 @@ function MessageNode({ data }: MessageNodeProps) {
     let deleted = false;
     let remainingHTML = '';
 
-    if (savedRange) {
+    if (range) {
       // 先聚焦编辑器
       editorEl.focus();
 
       // 尝试恢复选区
-      const restored = restoreSelectionRange(savedRange, editorEl);
+      const restored = restoreSelectionRange(range, editorEl);
 
       if (restored) {
         // 使用 Range API 直接删除
@@ -607,7 +619,7 @@ function MessageNode({ data }: MessageNodeProps) {
     // 2. 如果通过恢复选区删除失败，使用备用方案
     if (!deleted) {
       // 直接从编辑器内容中删除匹配的 HTML
-      const result = deleteHTMLContent(savedSelection, editorEl);
+      const result = deleteHTMLContent(html, editorEl);
       if (result !== null) {
         remainingHTML = result;
         deleted = true;
@@ -615,7 +627,7 @@ function MessageNode({ data }: MessageNodeProps) {
         // 最后的备选：使用原始内容减去选中内容（简单文本匹配）
         const originalContent = editorEl.innerHTML;
         // 尝试直接替换 HTML
-        const newContent = originalContent.replace(savedSelection, '');
+        const newContent = originalContent.replace(html, '');
         if (newContent !== originalContent) {
           remainingHTML = newContent;
           deleted = true;
@@ -634,7 +646,7 @@ function MessageNode({ data }: MessageNodeProps) {
     // 5. 创建新节点
     const parentId = node.parentId ?? undefined;
     const role = isAIChat ? node.role : 'user';
-    const newNodeId = useSessionStore.getState().addMessage(role, savedSelection, parentId);
+    const newNodeId = useSessionStore.getState().addMessage(role, html, parentId);
 
     // 6. 清空保存的选区
     setSavedSelection('');
@@ -650,14 +662,41 @@ function MessageNode({ data }: MessageNodeProps) {
     setShowContextMenu(false);
   };
 
-  // 点击其他地方关闭右键菜单
+  /**
+   * 右键菜单的关闭方式：Esc + 全屏背板（见两个 portal 里的 backdrop）。
+   *
+   * 不再给 window 挂 click 监听 —— 有些元素会 stopPropagation（编辑态的卡片就是），
+   * window 收不到 click，菜单就关不掉了。背板在 DOM 上直接盖住整个屏幕，
+   * 点哪里都必然先命中它，不受冒泡影响。
+   */
   useEffect(() => {
-    const handleClick = () => setShowContextMenu(false);
-    if (showContextMenu) {
-      window.addEventListener('click', handleClick);
-      return () => window.removeEventListener('click', handleClick);
-    }
+    if (!showContextMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowContextMenu(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [showContextMenu]);
+
+  /**
+   * 右键后把选区恢复回去。
+   *
+   * 实测：contextmenu 事件里选区还在（所以能取到要摘取的 HTML），但菜单弹出后
+   * Chrome 会把它**收成光标** —— `window.getSelection()` 变空、`collapsed: true`，
+   * 于是 `::selection` 的浅绿背景整段消失。用户正要在"这段选中文字"上选
+   * 复制摘取还是移动摘取，却看不到自己选了哪段。
+   *
+   * 用右键时存下的 Range 把选区还原。放进 setTimeout 是因为折叠发生在当前任务之后；
+   * 菜单关闭后 effect 自动失效，不会一直占着选区。
+   */
+  useEffect(() => {
+    if (!showContextMenu || !savedRange || !editRef.current) return;
+    const editor = editRef.current;
+    const timer = window.setTimeout(() => {
+      restoreSelectionRange(savedRange, editor);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [showContextMenu, savedRange]);
 
   // 防止重复保存的标记
   const isSavingRef = useRef(false);
@@ -678,6 +717,18 @@ function MessageNode({ data }: MessageNodeProps) {
       setEditingNode(node.id);
     }
   };
+
+  /**
+   * 每次进入编辑态都复位"是否输入过"标记。
+   *
+   * 这个标记是 onInput 命令式写到 DOM 属性上的（不走 state，避免每敲一个字就重渲染）。
+   * React 的 props 里一直是 "false"，所以它不会自动把命令式改成的 "true" 复位 —— 必须手动。
+   */
+  useEffect(() => {
+    if (isEditing && editRef.current) {
+      editRef.current.setAttribute('data-editor-dirty', 'false');
+    }
+  }, [isEditing]);
 
   /**
    * 编辑态初始化 / 清理。
@@ -845,19 +896,35 @@ function MessageNode({ data }: MessageNodeProps) {
 
         {/* 右键菜单 - 使用 Portal 渲染到 body */}
         {showContextMenu && node.parentId && createPortal(
-          <div
-            className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
-            style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={handleDelete}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+          <>
+            {/* 全屏背板：点任何地方都先命中它，不依赖事件冒泡 */}
+            <div
+              className="fixed inset-0 z-[999]"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowContextMenu(false);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowContextMenu(false);
+              }}
+            />
+            <div
+              className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[120px]"
+              style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>,
+              <button
+                onClick={handleDelete}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </div>
+          </>,
           document.body
         )}
       </>
@@ -1166,6 +1233,11 @@ function MessageNode({ data }: MessageNodeProps) {
             <div
               ref={editRef}
               contentEditable
+              // 给全局撤销分流用：敲过字就让浏览器原生撤销接管（见 hooks/useUndoRedo）
+              data-editor-dirty="false"
+              onInput={(e) => {
+                e.currentTarget.setAttribute('data-editor-dirty', 'true');
+              }}
               onBlur={handleEditBlur}
               onPaste={handleEditPaste}
               onKeyDown={(e) => {
@@ -1235,6 +1307,27 @@ function MessageNode({ data }: MessageNodeProps) {
         )}
       </div>
 
+      {/*
+        选中文字后浮出的工具条。
+        根节点没有父节点、建不了兄弟节点，所以不在它上面显示摘取动作。
+      */}
+      {isEditing && (
+        <SelectionToolbar
+          editorRef={editRef}
+          canExtract={Boolean(node.parentId)}
+          onExtractCopy={() => {
+            const html = getSelectedHTML();
+            if (html) handleExtractCopy(html);
+          }}
+          onExtractCut={() => {
+            const editor = editRef.current;
+            if (!editor) return;
+            const html = getSelectedHTML();
+            if (html) handleExtractCut(html, saveSelectionRange(editor));
+          }}
+        />
+      )}
+
       <NodeToolbar
         isVisible={showToolbar}
         position={Position.Top}
@@ -1269,30 +1362,36 @@ function MessageNode({ data }: MessageNodeProps) {
 
       {/* 右键菜单 - 使用 Portal 渲染到 body */}
       {showContextMenu && createPortal(
-        <div
-          className={cn(
-            "fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px] transition-opacity duration-150",
-            menuFading && "opacity-0"
-          )}
-          style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
-          onMouseDown={(e) => {
-            // 只阻止冒泡，不阻止默认行为（让 Ctrl+C/V 仍然工作）
-            e.stopPropagation();
-          }}
-          onClick={(e) => e.stopPropagation()}
+        <>
+          {/* 全屏背板：点任何地方都先命中它，不依赖事件冒泡（编辑态卡片会 stopPropagation） */}
+          <div
+            className="fixed inset-0 z-[999]"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowContextMenu(false);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowContextMenu(false);
+            }}
+          />
+          <div
+            className={cn(
+              "fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px] transition-opacity duration-150",
+              menuFading && "opacity-0"
+            )}
+            style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+            onMouseDown={(e) => {
+              // 只阻止冒泡，不阻止默认行为（让 Ctrl+C/V 仍然工作）
+              e.stopPropagation();
+            }}
+            onClick={(e) => e.stopPropagation()}
         >
           {/* 有保存的选中内容时显示摘取菜单 */}
           {savedSelection ? (
             <>
-              <div className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100">
-                摘取选中内容
-              </div>
-              {/* 选中内容预览 */}
-              <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50 border-b border-gray-100 max-w-[200px]">
-                <span className="line-clamp-2 break-words">
-                  "{savedSelection.replace(/<[^>]*>/g, '')}"
-                </span>
-              </div>
               <button
                 onMouseDown={(e) => {
                   e.preventDefault();
@@ -1314,7 +1413,7 @@ function MessageNode({ data }: MessageNodeProps) {
                   clickedItem === 'copy' && "bg-leaf-100 text-leaf-700 scale-[0.98]"
                 )}
               >
-                <span className="text-base">📋</span>
+                <Copy size={14} className="flex-shrink-0" />
                 <span>复制摘取</span>
               </button>
               <button
@@ -1338,7 +1437,7 @@ function MessageNode({ data }: MessageNodeProps) {
                   clickedItem === 'cut' && "bg-leaf-100 text-leaf-700 scale-[0.98]"
                 )}
               >
-                <span className="text-base">✂️</span>
+                <Scissors size={14} className="flex-shrink-0" />
                 <span>移动摘取</span>
               </button>
             </>
@@ -1354,7 +1453,8 @@ function MessageNode({ data }: MessageNodeProps) {
               </button>
             )
           )}
-        </div>,
+          </div>
+        </>,
         document.body
       )}
     </>

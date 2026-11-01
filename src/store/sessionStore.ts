@@ -16,6 +16,7 @@ import type {
 } from '../types';
 import { ATTACHMENT_KEY, IMAGE_REF_KEY } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
+import { useHistoryStore } from './historyStore';
 
 // ===== 类型定义 =====
 
@@ -92,6 +93,8 @@ interface SessionState {
   setNodeAttachment: (nodeId: string, attachment: NodeAttachment | null) => void;
   /** 设置或清除节点上的截图引用（图片本体在 IndexedDB 的 images 表） */
   setNodeImageRef: (nodeId: string, imageRef: NodeImageRef | null) => void;
+  /** 用快照恢复整个会话（撤销/重做） */
+  restoreSession: (sessionId: string, snapshot: ChatSession) => void;
   updateNodeMarkers: (sessionId: string) => void;
 
   // 批量操作
@@ -106,6 +109,19 @@ interface SessionState {
 // ===== 工具函数 =====
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+/**
+ * 记录一次"可撤销变更"之前的会话快照。
+ *
+ * 只给会改动节点树的 action 调用。`focusNode`、`setSessionMicroApp` 这类
+ * 导航/阅读状态刻意不进历史 —— 否则 Ctrl+Z 会莫名其妙地把镜头跳回去。
+ */
+function pushHistory(get: () => SessionState): void {
+  const { activeSessionId, sessions } = get();
+  if (!activeSessionId) return;
+  const before = sessions[activeSessionId];
+  if (before) useHistoryStore.getState().push(activeSessionId, before);
+}
 
 /**
  * 在指定父节点下插入一个子节点的公共逻辑。
@@ -226,7 +242,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ activeSessionId: sessionId });
   },
 
-  deleteSession: (sessionId) => {
+  deleteSession: (sessionId) => {    // 会话没了，它的撤销/重做历史也没有意义了
+    useHistoryStore.getState().clear(sessionId);
+
     set((state) => {
       const { [sessionId]: deleted, ...remainingSessions } = state.sessions;
       const newActiveId = state.activeSessionId === sessionId
@@ -296,7 +314,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // ===== 节点操作 =====
 
-  addMessage: (role, content, customParentId) => {
+  addMessage: (role, content, customParentId) => {    pushHistory(get);
+
     let createdNodeId = '';
 
     set((state) => {
@@ -336,7 +355,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 分两次写的话第二次更新会被判成"没变化"，角标永远刷不出来。
    * 这个约束很隐蔽，所以宁可专门开一个动作，也不让调用方自己拼。
    */
-  addQuotedNode: ({ content, parentId, metadata }) => {
+  addQuotedNode: ({ content, parentId, metadata }) => {    pushHistory(get);
+
     let createdNodeId = '';
 
     set((state) => {
@@ -398,7 +418,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  addBranchedMessages: (role, contents, targetParentId) => {
+  addBranchedMessages: (role, contents, targetParentId) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -453,7 +474,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateNodeContent: (nodeId, content, reasoning, metadataPatch) => {
+  updateNodeContent: (nodeId, content, reasoning, metadataPatch) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -497,7 +519,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  toggleNodeReasoningCollapse: (nodeId) => {
+  toggleNodeReasoningCollapse: (nodeId) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -527,7 +550,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  deleteNode: (nodeId) => {
+  deleteNode: (nodeId) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -578,7 +602,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  splitNodeIntoBranches: (nodeId, newOutlineContent, branchesContent) => {
+  splitNodeIntoBranches: (nodeId, newOutlineContent, branchesContent) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -655,7 +680,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeMarker: (nodeId, marker) => {
+  setNodeMarker: (nodeId, marker) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -681,7 +707,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  toggleNodeCollapse: (nodeId) => {
+  toggleNodeCollapse: (nodeId) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -711,7 +738,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodesCollapsed: (nodeIds, collapsed) => {
+  setNodesCollapsed: (nodeIds, collapsed) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -747,7 +775,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeSize: (nodeId, size) => {
+  setNodeSize: (nodeId, size) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -778,7 +807,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeAttachment: (nodeId, attachment) => {
+  setNodeAttachment: (nodeId, attachment) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -819,7 +849,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 与 setNodeAttachment 同一套写法与同一套理由：图片本体在 IndexedDB 的 images 表，
    * metadata 里只留引用；清除时删键而不是置 null。
    */
-  setNodeImageRef: (nodeId, imageRef) => {
+  setNodeImageRef: (nodeId, imageRef) => {    pushHistory(get);
+
     set((state) => {
       const { activeSessionId, sessions } = state;
       if (!activeSessionId) return state;
@@ -850,6 +881,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         },
       };
     });
+  },
+
+  restoreSession: (sessionId, snapshot) => {
+    set((state) => ({
+      ...state,
+      sessions: { ...state.sessions, [sessionId]: snapshot },
+    }));
   },
 
   updateNodeMarkers: (sessionId) => {

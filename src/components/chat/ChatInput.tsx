@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { Send, CornerDownLeft, Loader2, MessageSquare, Paperclip, X } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { useGenerationStore } from '../../store/generationStore';
@@ -13,14 +13,12 @@ import { resolveVisionConnection } from '../../store/apiConfigStore';
 import { useImageDraftStore } from '../../store/imageDraftStore';
 import { getLocalImage, blobToDataUrl } from '../../utils/imageStore';
 import { parseDocument, estimateTokens, LARGE_DOC_TOKENS } from '../../utils/documentParser';
-import FormatToolbar, { FormatSubMenu } from './FormatToolbar';
 import ImageLightbox from '../common/ImageLightbox';
-import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor, htmlToPlainText } from '../../utils/richtext';
+import { htmlToPlainText } from '../../utils/richtext';
 
 export default function ChatInput() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [activeSubMenu, setActiveSubMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
   const isComposing = useRef(false);
   const addMessage = useChatStore(state => state.addMessage);
   const setGeneratingNodeId = useChatStore(state => state.setGeneratingNodeId);
@@ -307,47 +305,6 @@ export default function ChatInput() {
     void runSubmit();
   };
 
-  // 编辑模式下，自动检测选区格式
-  const [autoOpenMenu, setAutoOpenMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
-
-  useEffect(() => {
-    if (!editingNodeId) {
-      setAutoOpenMenu(null);
-      return;
-    }
-
-    const checkSelectionFormat = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        // 选区为空，关闭菜单
-        setAutoOpenMenu(null);
-        return;
-      }
-
-      // 检测选区是否有格式
-      const hasBold = isBold();
-      const hasItalic = isItalic();
-      const hasUnderline = isUnderline();
-      const hasStrikethrough = isStrikethrough();
-      const hasBgColor = hasBackgroundColor();
-      const hasFgColor = hasTextColor();
-
-      // 如果有格式，自动弹出对应菜单
-      if (hasBold || hasItalic || hasUnderline || hasStrikethrough) {
-        setAutoOpenMenu('text');
-      } else if (hasBgColor) {
-        setAutoOpenMenu('highlight');
-      } else if (hasFgColor) {
-        setAutoOpenMenu('color');
-      } else {
-        setAutoOpenMenu(null);
-      }
-    };
-
-    document.addEventListener('selectionchange', checkSelectionFormat);
-    return () => document.removeEventListener('selectionchange', checkSelectionFormat);
-  }, [editingNodeId]);
-
   if (!session) return null;
 
   const isEditing = !!editingNodeId;
@@ -355,10 +312,8 @@ export default function ChatInput() {
   return (
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-10" data-tour="chat-input">
       <div className="bg-white rounded-2xl shadow-[0_8px_30px_-4px_rgba(0,0,0,0.1)] border border-gray-200 overflow-hidden flex flex-col">
-        {/* 顶部区域：二级菜单或 Replying to */}
-        {isEditing && activeSubMenu ? (
-          <FormatSubMenu menuType={activeSubMenu} onClose={() => setActiveSubMenu(null)} />
-        ) : !isEditing && activeNode ? (
+        {/* 顶部区域：Replying to */}
+        {!isEditing && activeNode ? (
           <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 border-b border-gray-100 flex items-center gap-2">
             <CornerDownLeft size={12} />
             <span>Replying to: </span>
@@ -444,18 +399,10 @@ export default function ChatInput() {
         )}
 
         <form onSubmit={handleSubmit} className="p-2 flex items-end gap-2">
-          {/* 工具栏主按钮 - 在对话框左边 */}
-          <FormatToolbar
-            isExpanded={isEditing}
-            onMenuToggle={(menuType) => setActiveSubMenu(menuType)}
-            autoOpenMenu={autoOpenMenu}
-          />
-
-          {/* 分隔线 - 编辑模式下显示 */}
-          {isEditing && (
-            <div className="w-px h-10 bg-gray-200 flex-shrink-0" />
-          )}
-
+          {/*
+            格式工具栏已移到「选中文字后浮出的工具条」（common/SelectionToolbar）：
+            用户选完字鼠标就在原地，不该再被要求移到底部来点按钮。
+          */}
           {/* 编辑模式：禁用的图标 */}
           {isEditing && (
             <button

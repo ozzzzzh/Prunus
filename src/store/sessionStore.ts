@@ -13,6 +13,7 @@ import type {
   NodeImageRef,
   SessionMicroApps,
   MicroAppId,
+  PdfMicroAppState,
 } from '../types';
 import { ATTACHMENT_KEY, IMAGE_REF_KEY } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
@@ -314,7 +315,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // ===== 节点操作 =====
 
-  addMessage: (role, content, customParentId) => {    pushHistory(get);
+  addMessage: (role, content, customParentId) => {
+    pushHistory(get);
 
     let createdNodeId = '';
 
@@ -355,7 +357,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 分两次写的话第二次更新会被判成"没变化"，角标永远刷不出来。
    * 这个约束很隐蔽，所以宁可专门开一个动作，也不让调用方自己拼。
    */
-  addQuotedNode: ({ content, parentId, metadata }) => {    pushHistory(get);
+  addQuotedNode: ({ content, parentId, metadata }) => {
+    pushHistory(get);
 
     let createdNodeId = '';
 
@@ -387,6 +390,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setSessionMicroApp: (sessionId, app, next) => {
+    /**
+     * 只有**记号笔**和**译文**的增删算一次可撤销的编辑；
+     * 翻页、换文件、缩放都不算。
+     *
+     * 判定用数组引用：翻页时调用方写的是 `{...latest, page}`，两个数组都还是原来的；
+     * 画记号是 `[...old, mark]`、加译文是 `[...old, translation]`，必然是新的。
+     * 比深比较便宜也更准确。
+     */
+    const sessionBefore = get().sessions[sessionId];
+    if (sessionBefore) {
+      const before = sessionBefore.microApps?.pdf;
+      const after = app === 'pdf' && next ? (next as PdfMicroAppState) : undefined;
+
+      // undefined 与 undefined 相等，不会误判；只在"一边有、一边没有"或"数组换了"时记一步
+      const listChanged = <T,>(beforeList: T[] | undefined, afterList: T[] | undefined) =>
+        beforeList !== afterList && (beforeList !== undefined || afterList !== undefined);
+
+      if (
+        listChanged(before?.highlights, after?.highlights) ||
+        listChanged(before?.translations, after?.translations)
+      ) {
+        useHistoryStore.getState().push(sessionId, sessionBefore);
+      }
+    }
+
     set((state) => {
       const session = state.sessions[sessionId];
       if (!session) return state;
@@ -418,7 +446,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  addBranchedMessages: (role, contents, targetParentId) => {    pushHistory(get);
+  addBranchedMessages: (role, contents, targetParentId) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -474,7 +503,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateNodeContent: (nodeId, content, reasoning, metadataPatch) => {    pushHistory(get);
+  updateNodeContent: (nodeId, content, reasoning, metadataPatch) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -519,7 +549,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  toggleNodeReasoningCollapse: (nodeId) => {    pushHistory(get);
+  toggleNodeReasoningCollapse: (nodeId) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -550,7 +581,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  deleteNode: (nodeId) => {    pushHistory(get);
+  deleteNode: (nodeId) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -602,7 +634,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  splitNodeIntoBranches: (nodeId, newOutlineContent, branchesContent) => {    pushHistory(get);
+  splitNodeIntoBranches: (nodeId, newOutlineContent, branchesContent) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -680,7 +713,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeMarker: (nodeId, marker) => {    pushHistory(get);
+  setNodeMarker: (nodeId, marker) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -707,7 +741,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  toggleNodeCollapse: (nodeId) => {    pushHistory(get);
+  toggleNodeCollapse: (nodeId) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -738,7 +773,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodesCollapsed: (nodeIds, collapsed) => {    pushHistory(get);
+  setNodesCollapsed: (nodeIds, collapsed) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -775,7 +811,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeSize: (nodeId, size) => {    pushHistory(get);
+  setNodeSize: (nodeId, size) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -807,7 +844,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  setNodeAttachment: (nodeId, attachment) => {    pushHistory(get);
+  setNodeAttachment: (nodeId, attachment) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;
@@ -849,7 +887,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 与 setNodeAttachment 同一套写法与同一套理由：图片本体在 IndexedDB 的 images 表，
    * metadata 里只留引用；清除时删键而不是置 null。
    */
-  setNodeImageRef: (nodeId, imageRef) => {    pushHistory(get);
+  setNodeImageRef: (nodeId, imageRef) => {
+    pushHistory(get);
 
     set((state) => {
       const { activeSessionId, sessions } = state;

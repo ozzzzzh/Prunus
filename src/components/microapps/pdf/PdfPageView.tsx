@@ -12,16 +12,23 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getPdfjs } from '../../../utils/pdfjs';
-import type { PdfHighlight } from '../../../types/microApp';
+import type { PdfHighlight, PdfTranslation } from '../../../types/microApp';
+import TranslationBox, { type PendingTranslation } from './TranslationBox';
 // 文本层样式随面板一起懒加载（CSS 也是面板这个 chunk 的一部分）
 import './pdfTextLayer.css';
 
+/** 历史数据没有 color 字段时的默认记号笔颜色（不透明，透明度由整层控制） */
+const DEFAULT_MARK_COLOR = '#ffd60a';
+
 /**
- * 记号笔颜色与浓度。
+ * 记号笔整层的浓度。
  *
- * 用 multiply 混合，所以浓度高了会像污渍，宁浅勿深；想调只改这一个数字。
+ * 用的是「**块内不透明 + 整层 opacity**」而不是给每块 rgba 透明度：
+ * PDF 文本层的行盒会上下轻微重叠，逐块半透明会在重叠处叠加两次，
+ * 出现深浅不一的横条纹接缝。整层统一淡化后重叠处颜色一致。
+ * 浓度高了会像污渍，宁浅勿深。
  */
-const HIGHLIGHT_COLOR = 'rgba(255, 214, 10, 0.2)';
+const HIGHLIGHT_OPACITY = 0.2;
 
 interface PdfPageViewProps {
   doc: PDFDocumentProxy;
@@ -32,6 +39,14 @@ interface PdfPageViewProps {
   onMeasured: (pageNumber: number, size: { width: number; height: number }) => void;
   /** 这一页上"已经摘录到画布"的区域，画成记号笔 */
   highlights: PdfHighlight[];
+  /** 这一页上已经翻译好的区域 */
+  translations: PdfTranslation[];
+  /** 这一页上正在翻译、还没落库的区域 */
+  pendingTranslations: PendingTranslation[];
+  /** 删除某条译文（落库的那条；进行中的不在这里） */
+  onDeleteTranslation: (id: string) => void;
+  /** 页面当前的像素高度，译文白块据此换算字号 */
+  pageHeight: number;
   /** Ctrl/Cmd + 点击标记 → 在画布上聚焦对应节点。**必须稳定** */
   onHighlightClick: (nodeId: string) => void;
   /**
@@ -52,6 +67,10 @@ function PdfPageView({
   scale,
   onMeasured,
   highlights,
+  translations,
+  pendingTranslations,
+  onDeleteTranslation,
+  pageHeight,
   onHighlightClick,
   highlightsInteractive,
 }: PdfPageViewProps) {
@@ -59,6 +78,13 @@ function PdfPageView({
   const textLayerContainerRef = useRef<HTMLDivElement>(null);
   /** 这一页有没有可提取的文字（没有通常意味着扫描件/纯图片） */
   const [hasText, setHasText] = useState(true);
+  /**
+   * 正在「按住查看原文」的那条译文。
+   *
+   * 必须提到这一层：白底矩形是这里画的，偷看时要连它们一起让开，
+   * 否则白块还在，露出来的只是"一块白"。
+   */
+  const [peekingId, setPeekingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +158,8 @@ function PdfPageView({
   }, [doc, pageNumber, scale, onMeasured]);
 
   return (
-    <div className="relative bg-white shadow-sm">
+    // overflow-hidden：译文块展开时会向下长，不裁掉就会溢到页间留白、压住下一页
+    <div className="relative bg-white shadow-sm overflow-hidden">
       <canvas ref={canvasRef} className="block" />
 
       {/*
@@ -143,33 +170,101 @@ function PdfPageView({
         按住 Ctrl/Cmd 时变成可点击 + 手型光标，点一下跳到对应节点。
       */}
       {highlights.length > 0 && (
-        <div className="absolute inset-0 z-[2]" style={{ pointerEvents: 'none' }}>
-          {highlights.map((highlight) =>
-            highlight.rects.map((rect, index) => (
-              <div
-                key={`${highlight.nodeId}-${index}`}
-                onClick={(e) => {
-                  if (!highlightsInteractive) return;
-                  e.stopPropagation();
-                  onHighlightClick(highlight.nodeId);
-                }}
-                title={highlightsInteractive ? '点击在画布中定位到这条摘录' : undefined}
-                className={`absolute rounded-[2px] ${highlightsInteractive ? 'cursor-pointer' : ''}`}
-                style={{
-                  left: `${rect[0] * 100}%`,
-                  top: `${rect[1] * 100}%`,
-                  width: `${rect[2] * 100}%`,
-                  height: `${rect[3] * 100}%`,
-                  backgroundColor: HIGHLIGHT_COLOR,
-                  // multiply 才像荧光笔：压暗底下的黑字同时提亮纸面，
-                  // 普通半透明叠加会显得像贴了一张黄纸
-                  mixBlendMode: 'multiply',
-                  // 只有按住修饰键时才拦截鼠标事件，"选原文"这条常用路径因此始终通畅
-                  pointerEvents: highlightsInteractive ? 'auto' : 'none',
-                }}
-              />
-            ))
+        /*
+          multiply + 整层 opacity 都放在容器上：
+          块本身用**不透明**颜色、重叠处颜色一致，整层只在最后统一淡化一次 ——
+          否则逐块半透明会在行盒重叠处叠成深浅不一的横条。
+          multiply 才像荧光笔：压暗底下的黑字同时提亮纸面。
+        */
+        <div
+          className="absolute inset-0 z-[2]"
+          style={{ pointerEvents: 'none', mixBlendMode: 'multiply', opacity: HIGHLIGHT_OPACITY }}
+        >
+          {highlights.map((highlight, highlightIndex) =>
+            highlight.rects.map((rect, index) => {
+              // 纯记号笔（没有 nodeId）不可点击；只有"已建节点"的标记能跳回去
+              const canJump = Boolean(highlight.nodeId);
+              return (
+                <div
+                  key={`${highlight.nodeId ?? `mark-${highlightIndex}`}-${index}`}
+                  onClick={(e) => {
+                    if (!highlightsInteractive || !highlight.nodeId) return;
+                    e.stopPropagation();
+                    onHighlightClick(highlight.nodeId);
+                  }}
+                  title={highlightsInteractive && canJump ? '点击在画布中定位到这条摘录' : undefined}
+                  className={`absolute rounded-[2px] ${highlightsInteractive && canJump ? 'cursor-pointer' : ''}`}
+                  style={{
+                    left: `${rect[0] * 100}%`,
+                    top: `${rect[1] * 100}%`,
+                    width: `${rect[2] * 100}%`,
+                    height: `${rect[3] * 100}%`,
+                    backgroundColor: highlight.color ?? DEFAULT_MARK_COLOR,
+                    // 只有按住修饰键时才拦截鼠标事件，"选原文"这条常用路径因此始终通畅
+                    pointerEvents: highlightsInteractive && canJump ? 'auto' : 'none',
+                  }}
+                />
+              );
+            })
           )}
+        </div>
+      )}
+
+      {/*
+        译文层：z 要高于记号笔（z-2），否则白块会被 multiply 的记号笔再压一层颜色。
+
+        白底分两层画：
+        - 第一层是**精确的选区矩形**，只盖被选中的那几行；
+        - 第二层由 TranslationBox 里的文字自带上（inline background）。
+        只铺一块外接框会连带盖掉最后一行没被选中的尾巴；只靠文字自带白底，
+        行距的缝隙里又会漏出原文。
+      */}
+      {(translations.length > 0 || pendingTranslations.length > 0) && (
+        <div className="absolute inset-0 z-[3] pointer-events-none">
+          {[...translations, ...pendingTranslations].map((item) =>
+            // 偷看原文时把这一条的白底一起撤掉，只留原位（见 peekingId 的说明）
+            item.id === peekingId
+              ? null
+              : item.rects.map((rect, index) => (
+                  <div
+                    key={`cover-${item.id}-${index}`}
+                    data-translation-cover
+                    className="absolute bg-white"
+                    style={{
+                      left: `${rect[0] * 100}%`,
+                      top: `${rect[1] * 100}%`,
+                      width: `${rect[2] * 100}%`,
+                      height: `${rect[3] * 100}%`,
+                    }}
+                  />
+                ))
+          )}
+
+          {translations.map((translation) => (
+            <TranslationBox
+              key={translation.id}
+              rects={translation.rects}
+              text={translation.translatedText}
+              fontRatio={translation.fontRatio}
+              pageHeight={pageHeight}
+              peeking={peekingId === translation.id}
+              onPeekChange={(next) => setPeekingId(next ? translation.id : null)}
+              onDelete={() => onDeleteTranslation(translation.id)}
+            />
+          ))}
+
+          {pendingTranslations.map((pending) => (
+            <TranslationBox
+              key={pending.id}
+              rects={pending.rects}
+              text={pending.text}
+              pending
+              fontRatio={pending.fontRatio}
+              pageHeight={pageHeight}
+              peeking={false}
+              onPeekChange={() => {}}
+            />
+          ))}
         </div>
       )}
 

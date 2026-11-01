@@ -14,7 +14,6 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useGenerationStore } from '../store/generationStore';
-import { isMicroAppInteracting } from '../utils/microAppFocus';
 
 export function useUndoRedo(enabled: boolean): void {
   useEffect(() => {
@@ -53,8 +52,9 @@ export function useUndoRedo(enabled: boolean): void {
         if (dirty || !empty) return;
       }
 
-      // 在 PDF 面板里选字时，快捷键一律让路
-      if (isMicroAppInteracting()) return;
+      // 注意：**不**调用 isMicroAppInteracting()。
+      // 那个守卫是给画布的导航/删除快捷键用的；撤销是全局动作，
+      // 用户刚在 PDF 上画完记号（焦点/选区还在面板里）时恰恰最需要它。
 
       // 生成中不撤销：流还在往当前节点写，撤销后会被随后的写入覆盖
       if (useGenerationStore.getState().generatingNodeId) return;

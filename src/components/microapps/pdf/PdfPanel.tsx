@@ -18,6 +18,8 @@ import {
   ChevronRight,
   CornerDownRight,
   FileText,
+  Highlighter,
+  Languages,
   Loader2,
   Minus,
   Plus,
@@ -39,6 +41,7 @@ import {
 } from '../../../utils/pdfDocumentCache';
 import { hasLocalPdf, saveLocalPdf } from '../../../utils/pdfDocumentStore';
 import { hashFileBytes } from '../../../utils/docHash';
+import { cn } from '../../../utils/cn';
 import { saveImage } from '../../../utils/imageStore';
 import {
   PAGE_GAP,
@@ -48,9 +51,15 @@ import {
   visibleRange,
 } from '../../../utils/pdfPaging';
 import { buildPdfQuote, PDF_QUOTE_MAX_CHARS, looksGarbled } from '../../../utils/pdfSelection';
-import type { PdfHighlight } from '../../../types/microApp';
+import {
+  translateToChinese,
+  PDF_TRANSLATE_MAX_CHARS,
+  isUnreadableTranslation,
+} from '../../../utils/translate';
+import type { PdfHighlight, PdfTranslation } from '../../../types/microApp';
 import type { ReactNode } from 'react';
 import PdfPageView from './PdfPageView';
+import type { PendingTranslation, TranslationRects } from './TranslationBox';
 
 interface PdfPanelProps {
   sessionId: string;
@@ -79,8 +88,24 @@ const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 1.25;
 
+/**
+ * 记号笔颜色。
+ *
+ * 存**不透明**颜色：透明度由 PdfPageView 在整层统一控制，
+ * 逐块半透明会在行盒重叠处叠成横条（与选中高亮是同一个坑）。
+ */
+const MARK_COLORS = [
+  { value: '#ffd60a', label: 'Yellow' },
+  { value: '#4ade80', label: 'Green' },
+  { value: '#60a5fa', label: 'Blue' },
+  { value: '#f472b6', label: 'Pink' },
+  { value: '#fb923c', label: 'Orange' },
+];
+
 /** 稳定的空数组：直接写 `[]` 会让 memo 的页面每次渲染都判定 props 变了 */
 const EMPTY_HIGHLIGHTS: PdfHighlight[] = [];
+const EMPTY_TRANSLATIONS: PdfTranslation[] = [];
+const EMPTY_PENDING: PendingTranslation[] = [];
 
 /** 气泡与选区之间的间距 */
 const BUBBLE_GAP = 10;
@@ -156,6 +181,16 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
   const marqueeRef = useRef<HTMLDivElement>(null);
   const setDraft = useImageDraftStore((s) => s.setDraft);
   const [bubble, setBubble] = useState<SelectionBubble | null>(null);
+  /** 记号笔颜色面板（二级弹出） */
+  const [markMenu, setMarkMenu] = useState(false);
+  /**
+   * 正在请求中的译文。
+   *
+   * **刻意不写进会话**：翻译是异步的，写进 store 就意味着撤销会撤出一个
+   * 还没拿到结果的空壳。成功之后才作为一条 PdfTranslation 落库，
+   * 于是"一次翻译 = 一步撤销"。
+   */
+  const [pendingTranslations, setPendingTranslations] = useState<Record<string, PendingTranslation>>({});
   /**
    * 气泡实测尺寸。
    *
@@ -511,6 +546,14 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     // 页码取选区**起点**所在页：跨页选区在 v1 记起始页
     const anchor = selection.anchorNode;
     const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement ?? null;
+
+    // 译文块里的文字是应用产出的，不是论文原文：选中它就只是选取复制，
+    // 不该再弹出"建节点 / 翻译"这套针对原文的操作。
+    if (anchorEl?.closest('[data-translation-box]')) {
+      setBubble(null);
+      return;
+    }
+
     const pageEl = anchorEl?.closest('[data-page]');
     const page = pageEl ? Number(pageEl.getAttribute('data-page')) : NaN;
     if (!page) {
@@ -523,6 +566,7 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     if (!host) return;
     const hostRect = host.getBoundingClientRect();
 
+    setMarkMenu(false);
     setBubble({
       text: selection.toString(),
       page,
@@ -533,6 +577,27 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
       hostH: hostRect.height,
       garbled: looksGarbled(selection.toString()),
     });
+  }, []);
+
+  /**
+   * 选区真的变了（尤其是被收成光标）时收起气泡。
+   *
+   * 只靠滚动容器的 mouseup 不够：在已经选中的文字上再点一下，浏览器会先把选区
+   * 收成一个光标，而这一步有时发生在 mouseup 回调**之后** —— 那次 mouseup 读到的
+   * 还是旧选区，气泡被原样重建，之后就再没有人来收它了（表现出来就是"点选区里
+   * 工具栏不消失，但选中背景已经没了"）。
+   *
+   * selectionchange 才是选区真正变化的信号，而且不依赖任何一次事件的先后顺序。
+   * 只在**收成光标**时动手，不在这里重算气泡：拖选过程中会连续触发，
+   * 每次都 `toString()` 一次大选区并不便宜。
+   */
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      if (selection && selection.isCollapsed) setBubble(null);
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
   }, []);
 
   /**
@@ -604,6 +669,65 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
   const hasRootTarget = Boolean(rootNodeId && sessionNodes?.[rootNodeId]);
 
   /**
+   * 给当前选区画一道记号笔（**不建节点**）。
+   *
+   * 与摘取的区别：摘取的标记绑定节点、可点击跳回；记号笔只是阅读标注，
+   * 没有 nodeId，所以既不跳转、也不会因为节点被删而消失。
+   */
+  const handleMark = useCallback(
+    (color: string) => {
+      if (!bubble || !docId) return;
+
+      // 先算位置再清选区（清完就取不到了）
+      const rects = collectHighlightRects(bubble.page);
+      if (rects.length === 0) return;
+
+      const latest = useSessionStore.getState().sessions[sessionId]?.microApps?.pdf;
+      if (latest) {
+        setSessionMicroApp(sessionId, 'pdf', {
+          ...latest,
+          highlights: [
+            ...(latest.highlights ?? []),
+            { docId, page: bubble.page, rects, color },
+          ],
+        });
+      }
+
+      window.getSelection()?.removeAllRanges();
+      setBubble(null);
+      setMarkMenu(false);
+    },
+    [bubble, docId, sessionId, setSessionMicroApp]
+  );
+
+  /**
+   * 选区起点处**真实的字号 ÷ 页面高度**。
+   *
+   * 为什么不从行高推算：行盒里还夹着 leading，且 pdf.js 的行盒比字的实际高度大，
+   * 估出来会偏大一圈 —— 汉字吃满字身框，再偏大就明显"比原文胖"。
+   * 文本层的 span 上就有 pdf.js 算好的最终字号，直接读它最准。
+   *
+   * 返回比例而不是像素，是为了缩放后能按新的页面高度还原。
+   * 取不到（选区落在空白、老数据）时返回 undefined，渲染层退回按行高估算。
+   */
+  const measureSelectionFontRatio = (page: number): number | undefined => {
+    const pageEl = scrollRef.current?.querySelector(`[data-page="${page}"]`);
+    if (!(pageEl instanceof HTMLElement)) return undefined;
+
+    const pageHeight = pageEl.getBoundingClientRect().height;
+    if (pageHeight <= 0) return undefined;
+
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement ?? null;
+    const span = anchorEl?.closest('.pdf-text-layer span');
+    if (!(span instanceof HTMLElement)) return undefined;
+
+    const size = parseFloat(getComputedStyle(span).fontSize);
+    return Number.isFinite(size) && size > 0 ? size / pageHeight : undefined;
+  };
+
+  /**
    * 把当前选区在某一页上的位置算成归一化矩形。
    *
    * 用比例而不是像素：缩放、改面板宽度、换设备都不用重算。
@@ -643,8 +767,9 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
 
     for (const highlight of pdfState?.highlights ?? []) {
       if (highlight.docId !== docId) continue;
-      // 节点已被删除的标记就不要再画了："这段已经进画布"这个断言已经不成立
-      if (!sessionNodes?.[highlight.nodeId]) continue;
+      // 节点已被删除的标记就不要再画了："这段已经进画布"这个断言已经不成立。
+      // 没有 nodeId 的纯记号笔不依赖任何节点，永远保留。
+      if (highlight.nodeId && !sessionNodes?.[highlight.nodeId]) continue;
 
       const list = map.get(highlight.page);
       if (list) list.push(highlight);
@@ -662,6 +787,155 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     }
     useSessionStore.getState().focusNode(nodeId);
   }, [sessionId]);
+
+  // ===== 译文（涂改液）=====
+
+  /** 当前文档、按页分组的译文（换过文件时旧的不会画到新文件上） */
+  const translationsByPage = useMemo(() => {
+    const map = new Map<number, PdfTranslation[]>();
+    if (!docId) return map;
+
+    for (const translation of pdfState?.translations ?? []) {
+      if (translation.docId !== docId) continue;
+      const list = map.get(translation.page);
+      if (list) list.push(translation);
+      else map.set(translation.page, [translation]);
+    }
+    return map;
+    // 只跟着 translations 走：翻页、缩放同样会换掉 pdfState 的引用，
+    // 而它们不该让所有带译文的页重新渲染
+  }, [pdfState?.translations, docId]);
+
+  /** 正在翻译的区域，同样按页分组 */
+  const pendingByPage = useMemo(() => {
+    const map = new Map<number, PendingTranslation[]>();
+    if (!docId) return map;
+
+    for (const pending of Object.values(pendingTranslations)) {
+      if (pending.docId !== docId) continue;
+      const list = map.get(pending.page);
+      if (list) list.push(pending);
+      else map.set(pending.page, [pending]);
+    }
+    return map;
+  }, [pendingTranslations, docId]);
+
+  /**
+   * 翻译当前选区。
+   *
+   * 目标语言固定中文：不做源语言判断 —— 即使是中文，繁体转简体、口语转书面语
+   * 也仍然有意义，加一条"看起来不用翻"的判断反而会让行为不可预期。
+   */
+  const handleTranslate = useCallback(() => {
+    if (!bubble || !docId) return;
+
+    const source = bubble.text;
+    if (source.trim().length > PDF_TRANSLATE_MAX_CHARS) {
+      useDialogStore.getState().showToast(
+        `选区超过 ${PDF_TRANSLATE_MAX_CHARS} 字，请分段翻译`,
+        { type: 'info' }
+      );
+      return;
+    }
+    if (looksGarbled(source)) {
+      useDialogStore.getState().showToast('这段文字可能是乱码，无法翻译', { type: 'error' });
+      return;
+    }
+
+    // 先算位置和字号再清选区（清完就都取不到了）
+    const rects = collectHighlightRects(bubble.page);
+    if (rects.length === 0) return;
+    const fontRatio = measureSelectionFontRatio(bubble.page);
+
+    const page = bubble.page;
+    window.getSelection()?.removeAllRanges();
+    setBubble(null);
+
+    const id = newTranslationId();
+    setPendingTranslations((prev) => ({
+      ...prev,
+      [id]: { id, docId, page, rects, fontRatio, text: '' },
+    }));
+
+    const finishPending = () => {
+      setPendingTranslations((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    };
+
+    void (async () => {
+      try {
+        const translated = await translateToChinese(source, (partial) => {
+          setPendingTranslations((prev) => {
+            const current = prev[id];
+            if (!current) return prev;
+            return { ...prev, [id]: { ...current, text: partial } };
+          });
+        });
+
+        if (isUnreadableTranslation(translated)) {
+          useDialogStore.getState().showToast(
+            '这段文字不是可识别的语言（可能是乱码或图片），没有翻译',
+            { type: 'error' }
+          );
+          return;
+        }
+        if (!translated) {
+          useDialogStore.getState().showToast('模型没有返回译文', { type: 'error' });
+          return;
+        }
+
+        const latest = useSessionStore.getState().sessions[sessionId]?.microApps?.pdf;
+        if (!latest) return;
+
+        // 同一位置重复翻译 → 替换，而不是叠两个白块
+        const kept = (latest.translations ?? []).filter(
+          (item) => !(item.docId === docId && item.page === page && rectsMatch(item.rects, rects))
+        );
+
+        setSessionMicroApp(sessionId, 'pdf', {
+          ...latest,
+          translations: [
+            ...kept,
+            {
+              id,
+              docId,
+              page,
+              rects,
+              sourceText: source,
+              translatedText: translated,
+              targetLang: 'zh',
+              fontRatio,
+              createdAt: Date.now(),
+            },
+          ],
+        });
+      } catch (error: unknown) {
+        const err = error as Error;
+        useDialogStore.getState().showToast(err?.message || '翻译失败，请稍后重试', { type: 'error' });
+      } finally {
+        finishPending();
+      }
+    })();
+  }, [bubble, docId, sessionId, setSessionMicroApp]);
+
+  /** 删除一条译文（可撤销：translations 数组变了，setSessionMicroApp 会记一步） */
+  const handleDeleteTranslation = useCallback(
+    (id: string) => {
+      const latest = useSessionStore.getState().sessions[sessionId]?.microApps?.pdf;
+      const translations = latest?.translations;
+      if (!latest || !translations) return;
+
+      const next = translations.filter((item) => item.id !== id);
+      if (next.length === translations.length) return;
+
+      setSessionMicroApp(sessionId, 'pdf', { ...latest, translations: next });
+    },
+    [sessionId, setSessionMicroApp]
+  );
 
   // ===== 截图：拖框选区 =====
 
@@ -1041,6 +1315,10 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
                           scale={scale}
                           onMeasured={handleMeasured}
                           highlights={highlightsByPage.get(pageNumber) ?? EMPTY_HIGHLIGHTS}
+                          translations={translationsByPage.get(pageNumber) ?? EMPTY_TRANSLATIONS}
+                          pendingTranslations={pendingByPage.get(pageNumber) ?? EMPTY_PENDING}
+                          onDeleteTranslation={handleDeleteTranslation}
+                          pageHeight={heights[i] ?? 0}
                           onHighlightClick={handleHighlightClick}
                           highlightsInteractive={modifierHeld}
                         />
@@ -1082,12 +1360,16 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
           </div>
         )}
 
-        {/* 选中后浮出的操作：两个图标按钮，hover 变绿并说明会挂到哪个节点上 */}
+        {/*
+          选中后浮出的操作。
+          外观与节点里的选中工具条（common/SelectionToolbar）保持一致：白底、灰图标、细边框，
+          否则同一个应用里会出现"黑色胶囊 + 白色胶囊"两套视觉语言。
+        */}
         {bubble && bubblePos && (
           <div
             ref={bubbleRef}
             style={bubblePos}
-            className="absolute z-20 -translate-x-1/2 flex items-center gap-0.5 px-1 py-1 rounded-lg bg-gray-900 text-white shadow-lg"
+            className="absolute z-20 -translate-x-1/2 flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-white border border-gray-200 shadow-lg"
           >
             <AttachButton
               icon={<CornerDownRight size={14} />}
@@ -1102,10 +1384,69 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
               onClick={() => handleCreateNode('root')}
             />
 
+            <span className="w-px h-4 bg-gray-200 mx-0.5" />
+
+            {/* 记号笔：点开二级色板，只标注、不建节点 */}
+            <div className="relative">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setMarkMenu((v) => !v)}
+                title="记号笔"
+                className={cn(
+                  'flex items-center justify-center p-1.5 rounded-md transition-colors',
+                  markMenu
+                    ? 'bg-leaf-100 text-leaf-700'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                )}
+              >
+                <Highlighter size={14} />
+              </button>
+
+              {markMenu && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white border border-gray-200 shadow-lg">
+                  {MARK_COLORS.map((color) => (
+                    <button
+                      key={color.value}
+                      type="button"
+                      // 保住选区：handleMark 要拿当前选区算矩形
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleMark(color.value)}
+                      className="w-5 h-5 rounded border-2 border-gray-200 hover:scale-110 transition-transform"
+                      style={{ backgroundColor: color.value }}
+                      title={color.label}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <span className="w-px h-4 bg-gray-200 mx-0.5" />
+
+            {/*
+              翻译：不做语言选择，目标固定中文（见 handleTranslate 的说明）。
+              乱码时禁用而不是隐藏 —— 隐藏会让用户以为"这里没有这个功能"。
+            */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleTranslate}
+              disabled={bubble.garbled}
+              title={bubble.garbled ? '这段文字可能是乱码，无法翻译' : '翻译成中文并覆盖原文'}
+              className={cn(
+                'flex items-center justify-center p-1.5 rounded-md transition-colors',
+                bubble.garbled
+                  ? 'text-gray-300 cursor-not-allowed'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+              )}
+            >
+              <Languages size={14} />
+            </button>
+
             {/* 乱码警告是条件性的（只在 PDF 缺字符映射时出现），与上面被删掉的页码角标不同：
                 它是在提醒"你正要摘的这段字本身可能是坏的"，不该跟着一起省掉。 */}
             {bubble.garbled && (
-              <span className="text-[10px] text-amber-300 pr-1" title="这份 PDF 缺少字符映射，取到的文字可能是乱码">
+              <span className="text-[10px] text-amber-600 pr-1" title="这份 PDF 缺少字符映射，取到的文字可能是乱码">
                 文字可能乱码
               </span>
             )}
@@ -1120,6 +1461,29 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
 const CAPTURE_MAX_EDGE = 1600;
 /** 节点卡片上缩略图的上限 */
 const THUMB_MAX_EDGE = 200;
+
+/** 译文 id。只用来定位/删除，不参与内容判断，所以不必像图片那样做内容哈希 */
+function newTranslationId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 两组归一化矩形是否落在同一处。
+ *
+ * 用来把"重复翻译同一段"识别成替换而不是叠加。给一点容差：
+ * 同样的选区两次拖出来，像素级不可能完全一致。
+ */
+function rectsMatch(a: TranslationRects, b: TranslationRects): boolean {
+  if (a.length !== b.length) return false;
+  const EPS = 0.002;
+  for (let i = 0; i < a.length; i += 1) {
+    for (let j = 0; j < 4; j += 1) {
+      if (Math.abs(a[i][j] - b[i][j]) > EPS) return false;
+    }
+  }
+  return true;
+}
 
 /** 命中最靠前的、包含该点的页面元素 */
 function pageAtClientPoint(
@@ -1220,10 +1584,12 @@ function AttachButton({
   return (
     <div className="relative group">
       <button
+        // 保住选区：创建节点时要拿当前选区算高亮矩形
+        onMouseDown={(e) => e.preventDefault()}
         onClick={onClick}
         disabled={disabled}
         aria-label={tip}
-        className="flex items-center justify-center p-1.5 rounded-md text-gray-300 hover:bg-leaf-600 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors"
+        className="flex items-center justify-center p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 transition-colors"
       >
         {icon}
       </button>

@@ -42,6 +42,8 @@ export interface PdfMicroAppState {
   pageCount?: number;
   /** 已经摘录到画布里的区域（在 PDF 上画一层记号笔） */
   highlights?: PdfHighlight[];
+  /** 已经翻译并覆盖在原文上的区域 */
+  translations?: PdfTranslation[];
 }
 
 /**
@@ -53,13 +55,63 @@ export interface PdfMicroAppState {
  * 带 docId 是因为换过文件时旧标记不该画到新文件上（会话只记一份"当前文档"）。
  */
 export interface PdfHighlight {
-  /** 由这次摘录生成的画布节点 id，点标记可以跳回去 */
-  nodeId: string;
+  /**
+   * 由这次摘录生成的画布节点 id，点标记可以跳回去。
+   *
+   * **可缺省**：用户只画记号、不建节点时没有对应节点。
+   * 这类标记点不出任何东西，只作为阅读标注保留。
+   */
+  nodeId?: string;
   docId: string;
   /** 1-based */
   page: number;
   /** [x, y, w, h]，均为页面宽高的比例 */
   rects: Array<[number, number, number, number]>;
+  /**
+   * 记号笔颜色（**不透明** CSS 颜色）。
+   *
+   * 透明度由渲染层统一控制（见 PdfPageView）：逐块半透明会在行与行的重叠处
+   * 叠加两次，出现深浅不一的横条纹。缺省 = 历史数据的默认黄色。
+   */
+  color?: string;
+}
+
+/**
+ * 一处"已翻译"的区域：像涂改液一样盖住原文，在上面显示译文。
+ *
+ * 与 PdfHighlight 共用同一套几何约定（归一化矩形、按 docId 归属、按 page 分组），
+ * 所以缩放、换面板宽度、换设备都不用重算。
+ *
+ * 与摘录的区别：它是**阅读层**的东西，不建节点、不写节点 metadata，
+ * 只随会话持久化（纯文本，可以随导出走）。
+ */
+export interface PdfTranslation {
+  /** 删除、去重时用来定位；不是内容哈希 —— 同一段可以有意翻两遍 */
+  id: string;
+  docId: string;
+  /** 1-based */
+  page: number;
+  /** 被替换掉的原文所占的矩形（归一化），渲染时据此精确铺白 */
+  rects: Array<[number, number, number, number]>;
+  /** 送进模型的原文（已做过断行/连字符归一化） */
+  sourceText: string;
+  /** 模型返回的译文（已清洗） */
+  translatedText: string;
+  /**
+   * 目标语言。
+   *
+   * 目前只有 `zh`（UI 也只有中文一个选项），保留字段是为了以后加语言时
+   * 不用改数据结构、不用迁移已有数据。
+   */
+  targetLang: string;
+  /**
+   * 原文的字号 ÷ 页面高度。
+   *
+   * 存比例而不是像素：缩放后要按新的页面高度还原成同样的字号。
+   * 缺省时渲染层退回按行高估算（兼容加这个字段之前写入的数据）。
+   */
+  fontRatio?: number;
+  createdAt: number;
 }
 
 export interface SessionMicroApps {

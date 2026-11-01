@@ -18,8 +18,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { cn } from '../../utils/cn';
 import { isMicroAppInteracting } from '../../utils/microAppFocus';
-import { FormatSubMenu } from '../chat/FormatToolbar';
-import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor } from '../../utils/richtext';
+import SelectionToolbar from '../common/SelectionToolbar';
 
 
 export default function ExpandedView() {
@@ -32,10 +31,6 @@ export default function ExpandedView() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
-
-  // 编辑模式状态
-  const [activeSubMenu, setActiveSubMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
-  const [, setAutoOpenMenu] = useState<'text' | 'color' | 'highlight' | null>(null);
 
   // 收集单链路节点（从根到当前叶子节点）
   const chainNodes = useMemo(() => {
@@ -73,42 +68,6 @@ export default function ExpandedView() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [exitExpandedView, editingNodeId]);
 
-  // 编辑模式下，自动检测选区格式
-  useEffect(() => {
-    if (!editingNodeId) {
-      setAutoOpenMenu(null);
-      return;
-    }
-
-    const checkSelectionFormat = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        setAutoOpenMenu(null);
-        return;
-      }
-
-      const hasBoldFormat = isBold();
-      const hasItalicFormat = isItalic();
-      const hasUnderlineFormat = isUnderline();
-      const hasStrikethroughFormat = isStrikethrough();
-      const hasBgColor = hasBackgroundColor();
-      const hasFgColor = hasTextColor();
-
-      if (hasBoldFormat || hasItalicFormat || hasUnderlineFormat || hasStrikethroughFormat) {
-        setAutoOpenMenu('text');
-      } else if (hasBgColor) {
-        setAutoOpenMenu('highlight');
-      } else if (hasFgColor) {
-        setAutoOpenMenu('color');
-      } else {
-        setAutoOpenMenu(null);
-      }
-    };
-
-    document.addEventListener('selectionchange', checkSelectionFormat);
-    return () => document.removeEventListener('selectionchange', checkSelectionFormat);
-  }, [editingNodeId]);
-
   // 自动滚动到底部（当开始生成新内容时）
   useEffect(() => {
     if (streamingNodeId && scrollRef.current) {
@@ -121,8 +80,6 @@ export default function ExpandedView() {
 
   // 如果没有展开的节点，不渲染
   if (!expandedNodeId || !session) return null;
-
-  const isEditing = !!editingNodeId;
 
   return (
     <div className="h-full w-full bg-[#fafafa] canvas-texture flex flex-col" data-tour="expanded-view">
@@ -151,11 +108,6 @@ export default function ExpandedView() {
             <span className="text-xs">返回画布</span>
           </button>
         </div>
-
-        {/* 编辑模式下的格式工具栏 */}
-        {isEditing && activeSubMenu && (
-          <FormatSubMenu menuType={activeSubMenu} onClose={() => setActiveSubMenu(null)} />
-        )}
       </motion.div>
 
       {/* 时间线内容区域 - 底部留出输入框空间 */}
@@ -200,6 +152,13 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
 
   // 是否处于编辑模式
   const isEditing = editingNodeId === node.id;
+
+  // 进入编辑态时复位"是否输入过"标记（命令式写在 DOM 上，React 不会自动复位）
+  useEffect(() => {
+    if (isEditing && editRef.current) {
+      editRef.current.setAttribute('data-editor-dirty', 'false');
+    }
+  }, [isEditing]);
 
   // 判断当前节点是否正在流式生成
   const isStreaming = isAIChat && role === 'assistant' && streamingNodeId === node.id;
@@ -308,6 +267,11 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
           <div
             ref={editRef}
             contentEditable={isEditing}
+            // 给全局撤销分流用：敲过字就让浏览器原生撤销接管（见 hooks/useUndoRedo）
+            data-editor-dirty="false"
+            onInput={(e) => {
+              e.currentTarget.setAttribute('data-editor-dirty', 'true');
+            }}
             suppressContentEditableWarning
             onBlur={handleBlur}
             onKeyDown={(e) => {
@@ -327,6 +291,13 @@ function TimelineNode({ node, isLast }: TimelineNodeProps) {
           </div>
         </div>
       </motion.div>
+
+      {/*
+        选中文字后浮出的格式工具条（与画布节点里的是同一个组件）。
+        这里不传 onExtractCopy/Cut：链路编辑是线性阅读视图，
+        没有"摘到哪个节点下"的概念，摘取仍只在画布上发生。
+      */}
+      {isEditing && <SelectionToolbar editorRef={editRef} />}
     </div>
   );
 }

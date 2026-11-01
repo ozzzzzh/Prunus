@@ -197,6 +197,8 @@ export async function clearAllData(): Promise<void> {
   await repository.folder.clear();
   // PDF 文档库也要清。漏掉它的话，几 MB 的文件会永久留在 IndexedDB 里没人认领
   await repository.pdf.clear();
+  // 截图库同理
+  await repository.images.clear();
   // 内存里已解码的文档同样要销毁，否则重置之后还能从缓存里把旧文件读出来
   destroyAllPdfDocuments();
 

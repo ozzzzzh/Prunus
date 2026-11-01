@@ -31,6 +31,16 @@
   --scale-round-y: 1px;
   --min-font-size-inv: calc(1 / var(--min-font-size));
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+
+  /**
+   * 整层统一淡化，配合下方 ::selection 用**不透明**颜色。
+   *
+   * 原因：浏览器是逐行绘制选中背景的，而 PDF 文本层的行盒（绝对定位 + 缩放变换）
+   * 会上下轻微重叠 —— 半透明色在重叠处叠加两次，就出现深浅不一的横条纹接缝。
+   * 改成"层内不透明色 + 整层 opacity"后，重叠处颜色一致，只在最后统一淡一次。
+   * 文字本身是透明的，所以这个 opacity 不会让正文变淡。
+   */
+  opacity: 0.3;
 }
 
 .pdf-text-layer span,
@@ -63,5 +73,6 @@
  * 没有这条样式，拖选时屏幕上不会有任何变化。
  */
 .pdf-text-layer ::selection {
-  background: rgba(106, 158, 98, 0.3); /* leaf-500 透明版 */
+  /* 必须不透明：透明度交给外层的 opacity，否则重叠处会叠成两道深色横条 */
+  background: #6a9e62; /* leaf-500 */
 }

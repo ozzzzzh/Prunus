@@ -13,8 +13,18 @@
 import type { DocKind } from '../types/node';
 import { getPdfjs, getPdfDocumentParams } from './pdfjs';
 
-/** 解析后保留的最大字符数，超出即截断（截断会在界面上明确告知用户） */
-export const MAX_DOC_CHARS = 20000;
+/**
+ * 单个附件允许的**估算 token** 上限，超出即拒绝上传。
+ *
+ * 为什么用 token 而不是字符：同样 20,000 个字符，中文约 20,000 tokens、英文只有 5,000，
+ * 实际工作量差 4 倍 —— 用字符当单位等于让中文用户被砍掉的内容是英文用户的 4 倍，
+ * 而且那个数字跟真正决定成本与上下文占用的东西对不上。estimateTokens 本来就在，
+ * 直接用同一个口径，界面上显示的 token 数也就是这里判的那个数。
+ *
+ * 60,000 的依据：主流模型上下文 128k 起，留得下链路本身与输出预留；
+ * 对主要场景（上传整篇文章做总结）绰绰有余 —— 一篇英文论文约 1 万 tokens。
+ */
+export const MAX_DOC_TOKENS = 60000;
 
 /** 单个文件大小上限。超过直接拒绝 —— 解析在主线程上跑，再大会把标签页卡死 */
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -26,11 +36,8 @@ export interface ParsedDocument {
   name: string;
   kind: DocKind;
   size: number;
-  /** 已截断的正文 */
+  /** 解析出的完整正文（不再截断；超限的文件在解析阶段就被拒了） */
   text: string;
-  /** 截断**之前**的字符数，用于告知用户实际丢了多少 */
-  totalChars: number;
-  truncated: boolean;
   /** PDF 页数，其它格式为 undefined */
   pages?: number;
 }
@@ -151,16 +158,25 @@ export async function parseDocument(file: File): Promise<ParsedDocument> {
     );
   }
 
-  const totalChars = normalized.length;
-  const truncated = totalChars > MAX_DOC_CHARS;
+  // 超限**拒绝**，不截断。
+  //
+  // 截断看着更"宽容"，实际是个正确性陷阱：用户传的是全文，界面说"已读取"，
+  // 模型只看到前半段，却给出一个语气笃定的总结 —— 用户无从察觉这是半篇的结果。
+  // （真实样本：38,795 字符的论文被砍到 20,000，丢掉的正好是结果与结论。）
+  // 拒绝虽然生硬，但它诚实；而且拒绝掉长尾之后，也就不需要"每轮少发一点"那类优化了。
+  const tokens = estimateTokens(normalized);
+  if (tokens > MAX_DOC_TOKENS) {
+    throw new Error(
+      `「${file.name}」约 ${tokens.toLocaleString()} tokens，超过单个附件上限 ` +
+        `${MAX_DOC_TOKENS.toLocaleString()}。请拆分后再上传。`
+    );
+  }
 
   return {
     name: file.name,
     kind,
     size: file.size,
-    text: truncated ? normalized.slice(0, MAX_DOC_CHARS) : normalized,
-    totalChars,
-    truncated,
+    text: normalized,
     pages,
   };
 }

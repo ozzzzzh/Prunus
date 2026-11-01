@@ -22,7 +22,7 @@ export interface MicroAppDescriptor {
   id: MicroAppId;
   /** 胶囊按钮上的文字 */
   label: string;
-  /** 面板标题栏文案 */
+  /** 微应用列表（下拉菜单）里显示的条目文案 */
   title: string;
   icon: ReactNode;
   /** 动态 import：微应用不进首屏包，只有真的打开时才下载 */
@@ -33,7 +33,7 @@ export const MICRO_APPS: Record<MicroAppId, MicroAppDescriptor> = {
   pdf: {
     id: 'pdf',
     label: 'PDF',
-    title: '论文阅读',
+    title: 'Prunus Paper',
     icon: <FileText size={14} />,
     load: () => import('./pdf/PdfPanel'),
   },

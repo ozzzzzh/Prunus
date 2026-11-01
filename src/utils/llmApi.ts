@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { useAPIConfigStore } from '../store/apiConfigStore';
+import { useAPIConfigStore, type LLMConnection } from '../store/apiConfigStore';
 
 // 检测是否是 Safari 浏览器
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -10,11 +10,76 @@ const DEFAULT_MODEL = (import.meta as any).env?.VITE_LLM_MODEL || 'gpt-3.5-turbo
 // Anthropic 协议版本
 const ANTHROPIC_VERSION = '2023-06-01';
 
-type LLMMessage = { role: 'user' | 'assistant' | 'system'; content: string };
+/**
+ * 一条消息的内容。
+ *
+ * 纯文本仍用 string（大多数调用方如此，也省得每处都包成数组）；
+ * 带图时用内容块数组 —— 这是 OpenAI / DeepSeek 兼容端点的形状。
+ * Anthropic 协议的形状不同，由 toAnthropicContent 转换。
+ */
+export type LLMContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+export type LLMMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string | LLMContentPart[];
+};
 
 type GenerateOptions = {
   enableThinking?: boolean;  // 是否开启深度思考
   temperature?: number;      // 采样温度
+  /**
+   * 覆盖连接参数（baseUrl / key / model / protocol）。
+   *
+   * 截图问答要单独走视觉模型，所以不能让本函数无脑读主配置。
+   * 不传时行为与以前完全一致。
+   */
+  connection?: LLMConnection;
+};
+
+/** 内容块数组里的纯文本部分拼起来（用于 system 提示词这类只接受字符串的地方） */
+function textOf(content: LLMMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((p): p is Extract<LLMContentPart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join('\n');
+}
+
+/**
+ * 把 OpenAI 形状的内容块转成 Anthropic 的 image 块。
+ *
+ * 两边主要差在图像：OpenAI 是 `{type:'image_url', image_url:{url}}`，
+ * Anthropic 是 `{type:'image', source:{type:'base64'|'url', ...}}`。
+ * 不转的话，用户把协议切到 Anthropic 后带图请求会直接被端点拒绝。
+ */
+function toAnthropicContent(content: LLMMessage['content']): unknown {
+  if (typeof content === 'string') return content;
+
+  return content.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+
+    const url = part.image_url.url;
+    const dataUrl = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url);
+    if (dataUrl) {
+      return {
+        type: 'image',
+        source: { type: 'base64', media_type: dataUrl[1], data: dataUrl[2] },
+      };
+    }
+    // 非 data URL：交给 Anthropic 的 url source（http/https 图片）
+    return { type: 'image', source: { type: 'url', url } };
+  });
+}
+
+/** 连接参数是从主配置来，还是视觉配置来的 —— 影响报错措辞 */
+type ResolvedConnection = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  protocol: 'openai' | 'anthropic';
+  usingVisionConfig?: boolean;
 };
 
 /** 额度耗尽错误（CDK 模式，后端返回 402） */
@@ -32,14 +97,24 @@ export async function generateAIResponse(
 ): Promise<{ content: string; reasoning: string }> {
   // BYOK 优先：用户填了 baseUrl + apiKey 则直连其 provider；
   // 否则走本地代理 /api/llm，API Key 由代理从环境变量（.env.local）注入。
-  const config = useAPIConfigStore.getState().config;
-  const byokBaseUrl = config.baseUrl?.trim() ?? '';
-  const byokApiKey = config.apiKey?.trim() ?? '';
+  //
+  // options.connection 用于「截图问答」这类要走另一套模型/端点的请求；
+  // 不传时沿用主配置，行为与以前一致。
+  const stored = useAPIConfigStore.getState().config;
+  const conn: ResolvedConnection = options?.connection ?? {
+    baseUrl: stored.baseUrl?.trim() ?? '',
+    apiKey: stored.apiKey?.trim() ?? '',
+    model: stored.model?.trim() || DEFAULT_MODEL,
+    protocol: stored.protocol,
+  };
+
+  const byokBaseUrl = conn.baseUrl.trim();
+  const byokApiKey = conn.apiKey.trim();
   const hasBYOK = Boolean(byokBaseUrl && byokApiKey);
-  const model = config.model?.trim() || DEFAULT_MODEL;
+  const model = conn.model.trim() || DEFAULT_MODEL;
 
   // Anthropic 协议：原生 fetch 走 /v1/messages（需 BYOK，服务器代理仅支持 OpenAI 协议）
-  if (config.protocol === 'anthropic') {
+  if (conn.protocol === 'anthropic') {
     if (!hasBYOK) {
       throw new Error('Anthropic 协议需要填写 Base URL 和 API Key（服务器默认配置仅支持 OpenAI 协议）。');
     }
@@ -148,14 +223,16 @@ async function generateAnthropicResponse(
   options: GenerateOptions | undefined,
   config: { baseUrl: string; apiKey: string; model: string }
 ): Promise<{ content: string; reasoning: string }> {
-  // 消息转换：OpenAI 的 system role → Anthropic 顶层 system 字段
+  // 消息转换：OpenAI 的 system role → Anthropic 顶层 system 字段。
+  // system 只接受字符串，所以用 textOf 把内容块里的文本抽出来；
+  // 其余消息的图像块要换成 Anthropic 的 image 形状（见 toAnthropicContent）。
   const system = messages
     .filter((m) => m.role === 'system')
-    .map((m) => m.content)
+    .map((m) => textOf(m.content))
     .join('\n\n');
   const anthropicMessages = messages
     .filter((m) => m.role !== 'system')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: toAnthropicContent(m.content) }));
 
   const body: Record<string, unknown> = {
     model: config.model,

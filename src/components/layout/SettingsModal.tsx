@@ -10,6 +10,7 @@ export default function SettingsModal() {
   const toggleSettings = useUIStore(state => state.toggleSettings);
   const config = useAPIConfigStore(state => state.config);
   const updateConfig = useAPIConfigStore(state => state.updateConfig);
+  const updateVisionConfig = useAPIConfigStore(state => state.updateVisionConfig);
   const resetConfig = useAPIConfigStore(state => state.resetConfig);
 
   // CDK 额度
@@ -175,6 +176,73 @@ export default function SettingsModal() {
               </div>
             </>
           )}
+        </div>
+
+        {/*
+          视觉模型：只用于 Paper 截图问答。
+          与聊天模型分开是为了"聊天换模型不会连带丢掉看图能力"。
+          三项留空则回退到上面的聊天配置（聊天模型本身支持看图时不用重复填）。
+        */}
+        <div className="pt-4 border-t border-gray-100 mb-6">
+          <h3 className="text-sm font-medium text-gray-700 mb-1">视觉模型（截图问答）</h3>
+          <p className="text-[11px] text-gray-400 mb-3 leading-relaxed">
+            用于 Prunus Paper 里截图提问。留空则复用上面的聊天配置；
+            聊天模型不支持图片时，在这里单独填一个支持视觉的端点。
+          </p>
+
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-500">协议 Protocol</label>
+              <div className="mt-1 flex gap-1 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => updateVisionConfig({ protocol: 'openai' })}
+                  className={cn(
+                    'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
+                    config.vision.protocol === 'openai' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
+                  )}
+                >
+                  OpenAI
+                </button>
+                <button
+                  onClick={() => updateVisionConfig({ protocol: 'anthropic' })}
+                  className={cn(
+                    'flex-1 px-3 py-1.5 text-xs rounded-md transition-colors',
+                    config.vision.protocol === 'anthropic' ? 'bg-white shadow-sm text-leaf-700 font-medium' : 'text-gray-500 hover:text-gray-700'
+                  )}
+                >
+                  Anthropic
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">模型 Model</label>
+              <input
+                value={config.vision.model}
+                onChange={(e) => updateVisionConfig({ model: e.target.value })}
+                placeholder="deepseek-flash"
+                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Base URL</label>
+              <input
+                value={config.vision.baseUrl}
+                onChange={(e) => updateVisionConfig({ baseUrl: e.target.value })}
+                placeholder="https://api.deepseek.com"
+                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">API Key</label>
+              <input
+                type="password"
+                value={config.vision.apiKey}
+                onChange={(e) => updateVisionConfig({ apiKey: e.target.value })}
+                placeholder="留空则复用上面的 Key"
+                className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-leaf-400 focus:ring-1 focus:ring-leaf-200"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="mt-8 flex justify-end">

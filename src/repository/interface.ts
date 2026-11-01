@@ -6,7 +6,7 @@
 
 import type { ChatSession } from '../store/sessionStore';
 import type { APIConfig } from '../store/apiConfigStore';
-import type { FolderItem, PdfDocumentRecord } from '../types';
+import type { FolderItem, PdfDocumentRecord, ImageRecord } from '../types';
 
 /**
  * 会话 Repository 接口
@@ -71,6 +71,21 @@ export interface IPdfDocumentRepository {
 }
 
 /**
+ * 截图 Repository 接口（Paper 截图问答）
+ *
+ * 与 PDF 文档同一套理由：二进制既不进防抖保存的整表重写，也不进 JSON 导出。
+ * 节点 metadata 里只留 imageId 引用与一张小缩略图。
+ */
+export interface IImageRepository {
+  /** 只查键、不读 blob —— 判断"这张图还在不在本机"时不该把图片读进内存 */
+  has(imageId: string): Promise<boolean>;
+  get(imageId: string): Promise<ImageRecord | null>;
+  save(record: ImageRecord): Promise<void>;
+  delete(imageId: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+/**
  * 数据持久化接口（组合）
  */
 export interface IPersistenceRepository {
@@ -78,6 +93,7 @@ export interface IPersistenceRepository {
   settings: ISettingsRepository;
   folder: IFolderRepository;
   pdf: IPdfDocumentRepository;
+  images: IImageRepository;
 
   // 初始化
   init(): Promise<void>;

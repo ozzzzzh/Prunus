@@ -6,12 +6,13 @@
 
 import type { ChatSession } from '../store/sessionStore';
 import type { APIConfig } from '../store/apiConfigStore';
-import type { FolderItem, PdfDocumentRecord } from '../types';
+import type { FolderItem, PdfDocumentRecord, ImageRecord } from '../types';
 import type {
   ISessionRepository,
   ISettingsRepository,
   IFolderRepository,
   IPdfDocumentRepository,
+  IImageRepository,
   IPersistenceRepository,
 } from './interface';
 import {
@@ -162,6 +163,36 @@ export class IndexedDBPdfDocumentRepository implements IPdfDocumentRepository {
 }
 
 /**
+ * 截图 Repository - IndexedDB 实现（Paper 截图问答）
+ *
+ * 与 PDF 文档同一套边界：**不接入 saveAll / exportAll / importAll**。
+ * 图片是二进制，且每次防抖保存都是"清表 + 全量重写"，
+ * 混进去会让画布上任何一次节点改动都重写全部截图。
+ */
+export class IndexedDBImageRepository implements IImageRepository {
+  async has(imageId: string): Promise<boolean> {
+    return hasData(STORES.IMAGES, imageId);
+  }
+
+  async get(imageId: string): Promise<ImageRecord | null> {
+    const record = await getData<ImageRecord>(STORES.IMAGES, imageId);
+    return record ?? null;
+  }
+
+  async save(record: ImageRecord): Promise<void> {
+    await saveData(STORES.IMAGES, record);
+  }
+
+  async delete(imageId: string): Promise<void> {
+    await deleteData(STORES.IMAGES, imageId);
+  }
+
+  async clear(): Promise<void> {
+    await clearStore(STORES.IMAGES);
+  }
+}
+
+/**
  * 组合 Repository - IndexedDB 实现
  */
 export class IndexedDBRepository implements IPersistenceRepository {
@@ -169,12 +200,14 @@ export class IndexedDBRepository implements IPersistenceRepository {
   settings: ISettingsRepository;
   folder: IFolderRepository;
   pdf: IPdfDocumentRepository;
+  images: IImageRepository;
 
   constructor() {
     this.session = new IndexedDBSessionRepository();
     this.settings = new IndexedDBSettingsRepository();
     this.folder = new IndexedDBFolderRepository();
     this.pdf = new IndexedDBPdfDocumentRepository();
+    this.images = new IndexedDBImageRepository();
   }
 
   async init(): Promise<void> {

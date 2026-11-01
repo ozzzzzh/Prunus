@@ -1,8 +1,8 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
-import { isAIChatNode, getNodeAttachment, getNodePdfRef, isPdfQuote, PDF_QUOTE_KEY } from '../../types';
+import { isAIChatNode, getNodeAttachment, getNodePdfRef, getNodeImageRef, isPdfQuote, PDF_QUOTE_KEY } from '../../types';
 import { usePdfViewerStore } from '../../store/pdfViewerStore';
 import { hasLocalPdf } from '../../utils/pdfDocumentStore';
 import { useChatStore } from '../../store/chatStore';
@@ -333,6 +333,8 @@ function MessageNode({ data }: MessageNodeProps) {
   const nodeAttachment = getNodeAttachment(node);
   // 摘录出处（来自 PDF 阅读器的节点才有）。同样存在 metadata 里。
   const nodePdfRef = getNodePdfRef(node);
+  // Paper 截图：metadata 里只有引用 + 一张小缩略图，图片本体在 IndexedDB
+  const nodeImageRef = getNodeImageRef(node);
   // 是否为"原文摘录"节点：决定正文渲染走纯文本还是 markdown，以及编辑时怎么进编辑器。
   // 在这里算一次而不是各处再调 isPdfQuote(node)：后者会让若干 effect 多出一个"隐式依赖"，
   // 而它是布尔量，作为依赖既精确又稳定
@@ -344,10 +346,13 @@ function MessageNode({ data }: MessageNodeProps) {
    * 文件是否在本机是**异步检查**，所以放在点击时做而不是渲染时：
    * 画布上可能有几百个节点，为每个节点查一次 IndexedDB 是不可接受的。
    */
-  const handleOpenSource = async () => {
-    if (!nodePdfRef) return;
-
-    if (!(await hasLocalPdf(nodePdfRef.docId))) {
+  /**
+   * 在左侧阅读器里定位到某份文档的某一页。
+   *
+   * PDF 出处角标与截图角标共用 —— 两者的"跳回原文"行为应该完全一致。
+   */
+  const openPdfPage = async (docId: string, page: number, name?: string) => {
+    if (!(await hasLocalPdf(docId))) {
       useDialogStore.getState().showToast('本机没有这份 PDF，重新上传同一份即可恢复', { type: 'info' });
       return;
     }
@@ -361,19 +366,24 @@ function MessageNode({ data }: MessageNodeProps) {
     // 会话当前读的不是这份文件（例如换过文件、或这条引用来自导入的会话）：
     // 把阅读器切到引用指向的那一份再跳。文件就在本机，所以做得到 ——
     // 引用点了没反应才是更糟的结果。
-    if (activeId && currentDocId !== nodePdfRef.docId) {
+    if (activeId && currentDocId !== docId) {
       useSessionStore.getState().setSessionMicroApp(activeId, 'pdf', {
-        docId: nodePdfRef.docId,
-        page: nodePdfRef.page,
-        name: nodePdfRef.name,
+        docId,
+        page,
+        name,
       });
-      useDialogStore.getState().showToast(`已切换到「${nodePdfRef.name || '引用的 PDF'}」`, {
+      useDialogStore.getState().showToast(`已切换到「${name || '引用的 PDF'}」`, {
         type: 'info',
       });
     }
 
     ui.setActiveMicroApp('pdf');
-    usePdfViewerStore.getState().jumpToPage(nodePdfRef.docId, nodePdfRef.page);
+    usePdfViewerStore.getState().jumpToPage(docId, page);
+  };
+
+  const handleOpenSource = async () => {
+    if (!nodePdfRef) return;
+    await openPdfPage(nodePdfRef.docId, nodePdfRef.page, nodePdfRef.name);
   };
 
   const isAIChat = isAIChatNode(node);
@@ -1071,6 +1081,38 @@ function MessageNode({ data }: MessageNodeProps) {
             <FileText size={11} className="flex-shrink-0" />
             <span className="truncate max-w-[200px]">{nodePdfRef.name || 'PDF 原文'}</span>
             <span className="text-leaf-500 flex-shrink-0">第 {nodePdfRef.page} 页</span>
+          </button>
+        )}
+
+        {/*
+          截图标签：这个节点挂了一张 Paper 截图。
+          用 metadata 里的小缩略图同步渲染 —— 图片本体在 IndexedDB，去读 blob 会让卡片异步闪一下。
+          有出处（docId + page）时点击跳回原文那一页，与上面的出处角标走同一条路径。
+          只放缩略图、不写字：卡片本来就窄，再挂"截图 · 第 N 页"会把标题挤掉。
+        */}
+        {nodeImageRef && !isEditing && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (nodeImageRef.docId && nodeImageRef.page) {
+                void openPdfPage(nodeImageRef.docId, nodeImageRef.page);
+              }
+            }}
+            disabled={!nodeImageRef.docId || !nodeImageRef.page}
+            className="mb-3 self-start p-1 rounded-lg bg-leaf-50 border border-leaf-100 shrink-0 hover:bg-leaf-100 hover:border-leaf-300 disabled:hover:bg-leaf-50 disabled:hover:border-leaf-100 transition-colors nodrag"
+            title={nodeImageRef.docId && nodeImageRef.page ? '截图 · 点击回到原文那一页' : '截图'}
+          >
+            {nodeImageRef.thumb ? (
+              <img
+                src={nodeImageRef.thumb}
+                alt="截图"
+                className="w-14 h-14 rounded object-cover border border-leaf-200 block"
+              />
+            ) : (
+              <span className="w-14 h-14 flex items-center justify-center">
+                <Camera size={14} className="text-leaf-500" />
+              </span>
+            )}
           </button>
         )}
 

@@ -5,9 +5,10 @@
  */
 
 const DB_NAME = 'prunus-db';
-// 3：加 pdfDocs（微应用「PDF 阅读器」的文档库）。升级逻辑见下方 onupgradeneeded，
-// 每个 store 都有 contains 守卫，所以老用户升级上来不会丢任何数据。
-const DB_VERSION = 3;
+// 3：加 pdfDocs（微应用「PDF 阅读器」的文档库）。
+// 4：加 images（Paper 截图问答的图片库）。
+// 升级逻辑见下方 onupgradeneeded，每个 store 都有 contains 守卫，所以老用户升级上来不会丢任何数据。
+const DB_VERSION = 4;
 
 // Store 名称
 export const STORES = {
@@ -17,6 +18,11 @@ export const STORES = {
   FOLDERS: 'folders',
   /** PDF 阅读器打开的文档（含文件本体）。keyPath 就是内容哈希，所以按 hash 查 = 按 id 查 */
   PDF_DOCS: 'pdfDocs',
+  /**
+   * Paper 截图（含图片二进制）。keyPath 同样是内容哈希。
+   * 单独成表而不是塞进节点 metadata：否则每次防抖保存都会把所有图片重写一遍。
+   */
+  IMAGES: 'images',
 } as const;
 
 /**
@@ -79,6 +85,13 @@ export function openDatabase(): Promise<IDBDatabase> {
       // 直接 get(docId) 即可，不需要额外索引。
       if (!db.objectStoreNames.contains(STORES.PDF_DOCS)) {
         db.createObjectStore(STORES.PDF_DOCS, { keyPath: 'docId' });
+      }
+
+      // 创建 images store（DB v4 新增）—— Paper 截图问答。
+      // 与 pdfDocs 同一套理由：图片是二进制、且不进 JSON 导出，所以单独成表、
+      // 不参与防抖保存的整表重写。keyPath 用 imageId（内容指纹），按 hash 查即可。
+      if (!db.objectStoreNames.contains(STORES.IMAGES)) {
+        db.createObjectStore(STORES.IMAGES, { keyPath: 'imageId' });
       }
     };
   });

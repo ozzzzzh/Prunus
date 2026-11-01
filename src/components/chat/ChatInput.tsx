@@ -6,11 +6,15 @@ import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore } from '../../store/uiStore';
 import { useAPIConfigStore } from '../../store/apiConfigStore';
 import { useDialogStore } from '../../store/dialogStore';
-import type { AIRole, NodeAttachment } from '../../types';
-import { isAIChatNode, getNodeAttachment } from '../../types';
-import { generateAIResponse, QuotaExceededError } from '../../utils/llmApi';
+import type { NodeAttachment } from '../../types';
+import { isAIChatNode, getNodeAttachment, getNodeImageRef } from '../../types';
+import { generateAIResponse, QuotaExceededError, type LLMMessage, type LLMContentPart } from '../../utils/llmApi';
+import { resolveVisionConnection } from '../../store/apiConfigStore';
+import { useImageDraftStore } from '../../store/imageDraftStore';
+import { getLocalImage, blobToDataUrl } from '../../utils/imageStore';
 import { parseDocument, estimateTokens, LARGE_DOC_TOKENS } from '../../utils/documentParser';
 import FormatToolbar, { FormatSubMenu } from './FormatToolbar';
+import ImageLightbox from '../common/ImageLightbox';
 import { isBold, isItalic, isUnderline, isStrikethrough, hasBackgroundColor, hasTextColor, htmlToPlainText } from '../../utils/richtext';
 
 export default function ChatInput() {
@@ -28,6 +32,11 @@ export default function ChatInput() {
   const setExpandedNode = useUIStore(state => state.setExpandedNode);
   const focusNode = useSessionStore(state => state.focusNode);
   const setNodeAttachment = useSessionStore(state => state.setNodeAttachment);
+  const setNodeImageRef = useSessionStore(state => state.setNodeImageRef);
+
+  // Paper 截图草稿：由 PDF 面板写入、这里消费（两者是兄弟组件，只能经共享 store 传递）
+  const imageDraft = useImageDraftStore(state => state.draft);
+  const clearImageDraft = useImageDraftStore(state => state.clearDraft);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
   const activeNode = session && session.currentNodeId ? session.nodes[session.currentNodeId] : null;
@@ -38,6 +47,8 @@ export default function ChatInput() {
   const [attachment, setAttachment] = useState<NodeAttachment | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 截图预览灯箱 */
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // memo 是有必要的：estimateTokens 要对整篇正文跑正则，而 ChatInput 每次敲键都会重渲染。
   // 上限提到 60k tokens 之后，一篇文章是几十万字符，逐键重算不再是可忽略的开销。
@@ -81,15 +92,28 @@ export default function ChatInput() {
 
     const messageContent = input.trim();
     const pending = attachment;
+    const pendingImage = imageDraft;
     setInput('');
     setAttachment(null);
+    clearImageDraft();
 
     const userNodeId = addMessage('user', messageContent);
 
-    // 附件写进刚建出来的这个用户节点。刻意不塞进 content ——
-    // content 保持是用户手打的那句话，附件走 metadata，卡片上才显示得干净。
+    // 附件/截图写进刚建出来的这个用户节点。刻意不塞进 content ——
+    // content 保持是用户手打的那句话，这些走 metadata，卡片上才显示得干净。
     if (pending) {
       setNodeAttachment(userNodeId, pending);
+    }
+    if (pendingImage) {
+      setNodeImageRef(userNodeId, {
+        imageId: pendingImage.imageId,
+        width: pendingImage.width,
+        height: pendingImage.height,
+        page: pendingImage.page,
+        docId: pendingImage.docId,
+        thumb: pendingImage.thumb,
+        createdAt: Date.now(),
+      });
     }
 
     setIsLoading(true);
@@ -104,8 +128,27 @@ export default function ChatInput() {
       const latestState = useChatStore.getState();
       const currentSession = latestState.sessions[activeSessionId];
 
-      const history: { role: AIRole, content: string }[] = [];
+      // 这次请求里有没有真的带上图片 —— 决定要不要切换到视觉模型
+      let usedImage = false;
+      // 引用了截图但本机没有这张图（图片不随会话导出，换设备后就会这样）
+      let missingImage = false;
+
+      const history: LLMMessage[] = [];
       let currId: string | null = userNodeId || currentSession.currentNodeId;
+
+      /**
+       * 自 tip（当前节点）向根回溯时，是否已经遇到过 assistant 节点。
+       *
+       * 这就是"图片不进每轮上下文"的规则：带图的节点**只有当它到 tip 之间还没有
+       * 出现过 assistant 回复**时才注入图片。
+       *
+       * - 截图后的第一问：图节点之后只有本轮的用户消息 → 发图
+       * - 后续追问：图节点之后已有 assistant 回复，而它的正文就在链里 → 不发图
+       * - 从图节点另开一个分支再问：新分支里还没有 assistant → 发图
+       *
+       * 无状态、按分支计算，不需要额外的"已发送"标记（那种标记在请求失败时会错乱）。
+       */
+      let sawAssistant = false;
 
       while (currId && currentSession.nodes[currId]) {
         const node = currentSession.nodes[currId];
@@ -119,19 +162,55 @@ export default function ChatInput() {
           // 功能会显得是坏的。代价是后续每条消息都重发整篇文档、重复计费 ——
           // 这正是 handleSubmit 里要做额度确认的原因。
           const att = getNodeAttachment(node);
-          const parts: string[] = [];
+          const textParts: string[] = [];
           if (att) {
-            parts.push(`<document name="${att.name}">\n${att.text}\n</document>`);
+            textParts.push(`<document name="${att.name}">\n${att.text}\n</document>`);
           }
-          if (content) parts.push(content);
+          if (content) textParts.push(content);
+
+          // 截图：只在"还没被回答过"的分支段里发送（规则见上方 sawAssistant）
+          let imagePart: LLMContentPart | null = null;
+          const imageRef = getNodeImageRef(node);
+          if (imageRef && !sawAssistant) {
+            const record = await getLocalImage(imageRef.imageId);
+            if (record) {
+              imagePart = {
+                type: 'image_url',
+                image_url: { url: await blobToDataUrl(record.blob) },
+              };
+              usedImage = true;
+            } else {
+              // 图片不进 JSON 导出，所以换设备后节点还在、图没了。
+              // 不能静默地少发一张图 —— 模型会一本正经地回答一个它没看见的东西。
+              missingImage = true;
+            }
+          }
 
           // 判空必须在摊平之后：内容全是标记的节点（例如编辑器里只剩一个空 <div>）
           // 摊平后是空串，发过去会变成一条空的 assistant 消息，部分 API 会直接报错。
-          if (parts.length) {
-            history.unshift({ role: node.role, content: parts.join('\n\n') });
+          if (textParts.length || imagePart) {
+            // 有图时用内容块数组；纯文本仍然发字符串（与改造前完全一致）
+            const messageContent: string | LLMContentPart[] = imagePart
+              ? [
+                  ...(textParts.length ? [{ type: 'text' as const, text: textParts.join('\n\n') }] : []),
+                  imagePart,
+                ]
+              : textParts.join('\n\n');
+            history.unshift({ role: node.role, content: messageContent });
           }
+
+          // 处理完当前节点再置位：assistant 自己就是这一轮的回答，
+          // 只有它**之后**（更靠近 tip）的节点才该认为"图已经被回答过了"
+          if (node.role === 'assistant') sawAssistant = true;
         }
         currId = node.parentId;
+      }
+
+      if (missingImage) {
+        useDialogStore.getState().showToast(
+          '这张截图不在本设备（图片不随会话导出），模型看不到它 —— 请重新截取',
+          { type: 'error' }
+        );
       }
 
       const baseSystemPrompt = 'You are a helpful AI assistant. Provide structured, clear, and concise answers.';
@@ -162,6 +241,10 @@ export default function ChatInput() {
         }
       }, {
         enableThinking,
+        // 只有真的带了图才切到视觉配置；纯文本请求保持走主配置（行为与改造前一致）
+        connection: usedImage
+          ? resolveVisionConnection(useAPIConfigStore.getState().config)
+          : undefined,
       });
 
       // 流结束后一次性写入 sessionStore
@@ -203,9 +286,9 @@ export default function ChatInput() {
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    // 允许「只传文档不提问」：那是最常见的用法（"总结这份文档"），
-    // 所以附件也算有效内容。解析中则一律拦住，避免把半个文件发出去。
-    if ((!input.trim() && !attachment) || !activeSessionId || isLoading || isParsing) return;
+    // 允许「只传文档/只发截图不提问」：那是最常见的用法（"总结这份文档"、"这张图是什么"），
+    // 所以附件与截图也算有效内容。解析中则一律拦住，避免把半个文件发出去。
+    if ((!input.trim() && !attachment && !imageDraft) || !activeSessionId || isLoading || isParsing) return;
 
     // 附件会让本分支的**后续每条消息**都重发整篇文档、重复计费（大模型调用无状态）。
     // 这里是额度最容易被意外耗光的地方，所以超过阈值时先确认，而不是默默扣掉。
@@ -331,6 +414,35 @@ export default function ChatInput() {
           </div>
         )}
 
+        {/*
+          Paper 截图：只有缩略图（不再写字数/页码）。
+          缩略图可点开预览 —— 想确认截对了没有，200px 的缩略图看不清。
+        */}
+        {!isEditing && imageDraft && (
+          <div className="bg-leaf-50 px-4 py-2 text-xs border-b border-leaf-100 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(true)}
+              title="点击预览"
+              className="flex-shrink-0 rounded overflow-hidden border border-leaf-200 hover:border-leaf-400 hover:shadow-sm transition-all"
+            >
+              <img
+                src={imageDraft.thumb}
+                alt="截图"
+                className="w-10 h-10 object-cover block"
+              />
+            </button>
+            <button
+              type="button"
+              onClick={clearImageDraft}
+              title="移除截图"
+              className="flex-shrink-0 text-leaf-500 hover:text-red-500 transition-colors"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="p-2 flex items-end gap-2">
           {/* 工具栏主按钮 - 在对话框左边 */}
           <FormatToolbar
@@ -410,6 +522,15 @@ export default function ChatInput() {
           )}
         </form>
       </div>
+
+      {/* 预览：草稿被清掉（发送/移除）时自动关闭 */}
+      {previewOpen && imageDraft && (
+        <ImageLightbox
+          imageId={imageDraft.imageId}
+          fallback={imageDraft.thumb}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
     </div>
   );
 }

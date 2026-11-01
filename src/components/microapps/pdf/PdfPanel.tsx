@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Camera,
   ChevronLeft,
   ChevronRight,
   CornerDownRight,
@@ -28,6 +29,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { useSessionStore } from '../../../store/sessionStore';
 import { useUIStore } from '../../../store/uiStore';
 import { usePdfViewerStore } from '../../../store/pdfViewerStore';
+import { useImageDraftStore } from '../../../store/imageDraftStore';
 import { useDialogStore } from '../../../store/dialogStore';
 import { getPdfjs, getPdfDocumentParams } from '../../../utils/pdfjs';
 import {
@@ -37,6 +39,7 @@ import {
 } from '../../../utils/pdfDocumentCache';
 import { hasLocalPdf, saveLocalPdf } from '../../../utils/pdfDocumentStore';
 import { hashFileBytes } from '../../../utils/docHash';
+import { saveImage } from '../../../utils/imageStore';
 import {
   PAGE_GAP,
   PAGE_TOP_PADDING,
@@ -140,6 +143,18 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [range, setRange] = useState<[number, number]>([0, -1]);
+
+  // ===== 截图（拖框选区）=====
+  const [capturing, setCapturing] = useState(false);
+  /**
+   * 拖拽中的矩形用 ref + 直接改样式，而不是每 move 一次 setState。
+   *
+   * 面板渲染一次要遍历全部页（`Array.from({length: pageCount})`），
+   * 大文档上逐帧 setState 会明显掉帧 —— 与分隔条拖动同一套处理。
+   */
+  const captureDragRef = useRef<{ clientX0: number; clientY0: number; clientX1: number; clientY1: number } | null>(null);
+  const marqueeRef = useRef<HTMLDivElement>(null);
+  const setDraft = useImageDraftStore((s) => s.setDraft);
   const [bubble, setBubble] = useState<SelectionBubble | null>(null);
   /**
    * 气泡实测尺寸。
@@ -648,6 +663,108 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
     useSessionStore.getState().focusNode(nodeId);
   }, [sessionId]);
 
+  // ===== 截图：拖框选区 =====
+
+  const cancelCapture = useCallback(() => {
+    captureDragRef.current = null;
+    setCapturing(false);
+    if (marqueeRef.current) marqueeRef.current.style.display = 'none';
+  }, []);
+
+  // Esc 取消截图
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelCapture();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [capturing, cancelCapture]);
+
+  /** 直接把选框写到 DOM 上，不走 setState（理由见 captureDragRef 的注释） */
+  const paintMarquee = useCallback((drag: { clientX0: number; clientY0: number; clientX1: number; clientY1: number }, overlay: DOMRect) => {
+    const el = marqueeRef.current;
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.left = `${Math.min(drag.clientX0, drag.clientX1) - overlay.left}px`;
+    el.style.top = `${Math.min(drag.clientY0, drag.clientY1) - overlay.top}px`;
+    el.style.width = `${Math.abs(drag.clientX1 - drag.clientX0)}px`;
+    el.style.height = `${Math.abs(drag.clientY1 - drag.clientY0)}px`;
+  }, []);
+
+  const handleCapturePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const drag = { clientX0: e.clientX, clientY0: e.clientY, clientX1: e.clientX, clientY1: e.clientY };
+    captureDragRef.current = drag;
+    paintMarquee(drag, e.currentTarget.getBoundingClientRect());
+  };
+
+  const handleCapturePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = captureDragRef.current;
+    if (!drag) return;
+    drag.clientX1 = e.clientX;
+    drag.clientY1 = e.clientY;
+    paintMarquee(drag, e.currentTarget.getBoundingClientRect());
+  };
+
+  const handleCapturePointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = captureDragRef.current;
+    captureDragRef.current = null;
+
+    // 点击（而非拖动）视为取消
+    if (!drag || Math.abs(e.clientX - drag.clientX0) < 8 || Math.abs(e.clientY - drag.clientY0) < 8) {
+      cancelCapture();
+      return;
+    }
+
+    setCapturing(false);
+    if (marqueeRef.current) marqueeRef.current.style.display = 'none';
+
+    const started = pageAtClientPoint(scrollRef.current, drag.clientX0, drag.clientY0);
+    if (!started) {
+      useDialogStore.getState().showToast('请在页面区域内框选', { type: 'info' });
+      return;
+    }
+
+    // 只截一页：把选区夹到起始页的范围内，跨页的部分丢掉
+    const pageRect = started.el.getBoundingClientRect();
+    const sel = {
+      left: Math.max(Math.min(drag.clientX0, e.clientX), pageRect.left),
+      top: Math.max(Math.min(drag.clientY0, e.clientY), pageRect.top),
+      right: Math.min(Math.max(drag.clientX0, e.clientX), pageRect.right),
+      bottom: Math.min(Math.max(drag.clientY0, e.clientY), pageRect.bottom),
+    };
+    if (sel.right - sel.left < 8 || sel.bottom - sel.top < 8) return;
+
+    try {
+      const cropped = await cropPageRegion(started.el, sel);
+      if (!cropped) throw new Error('这块区域没有可截取的内容');
+
+      const imageId = await hashFileBytes(await cropped.blob.arrayBuffer());
+      await saveImage({
+        imageId,
+        blob: cropped.blob,
+        width: cropped.width,
+        height: cropped.height,
+      });
+
+      setDraft({
+        imageId,
+        thumb: cropped.thumb,
+        width: cropped.width,
+        height: cropped.height,
+        page: started.page,
+        docId: docId ?? undefined,
+      });
+      useDialogStore.getState().showToast('已截取，可直接向模型提问', { type: 'success' });
+    } catch (err) {
+      console.error('[PdfPanel] 截图失败:', err);
+      useDialogStore.getState().showToast((err as Error)?.message || '截图失败', { type: 'error' });
+    }
+  };
+
   // ===== 打开 / 更换文件 =====
 
   const handlePickFile = useCallback(
@@ -802,6 +919,16 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
           </div>
         )}
 
+        {/* 截图：进入拖框选区模式 */}
+        <button
+          onClick={() => { captureDragRef.current = null; setCapturing(true); }}
+          disabled={!doc || capturing}
+          className="p-1 text-gray-400 hover:text-leaf-600 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors shrink-0"
+          title="截图"
+        >
+          <Camera size={15} />
+        </button>
+
         <span className="w-px h-4 bg-gray-200 mx-1 shrink-0" />
 
         <button
@@ -931,6 +1058,30 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
           </div>
         )}
 
+        {/*
+          截图模式：盖住页面区域的拖框层。
+          放在 body（relative）里而不是滚动容器里 —— 坐标就不必考虑滚动偏移，
+          松手时再用页面元素自己的 rect 换算。z-40 要高于选区气泡（z-20）与 busy 遮罩（z-30）。
+        */}
+        {capturing && (
+          <div
+            className="absolute inset-0 z-40 cursor-crosshair bg-gray-900/10 touch-none"
+            onPointerDown={handleCapturePointerDown}
+            onPointerMove={handleCapturePointerMove}
+            onPointerUp={handleCapturePointerUp}
+            onPointerCancel={cancelCapture}
+          >
+            <div
+              ref={marqueeRef}
+              className="absolute border-2 border-leaf-500 bg-leaf-500/10 pointer-events-none"
+              style={{ display: 'none' }}
+            />
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-gray-900/85 text-white text-xs pointer-events-none whitespace-nowrap shadow-lg">
+              拖框选择要截取的区域 · Esc 取消
+            </div>
+          </div>
+        )}
+
         {/* 选中后浮出的操作：两个图标按钮，hover 变绿并说明会挂到哪个节点上 */}
         {bubble && bubblePos && (
           <div
@@ -963,6 +1114,88 @@ export default function PdfPanel({ sessionId }: PdfPanelProps) {
       </div>
     </div>
   );
+}
+
+/** 截图的输出上限（长边）。超过就等比缩小，避免请求体过大、也省视觉 token */
+const CAPTURE_MAX_EDGE = 1600;
+/** 节点卡片上缩略图的上限 */
+const THUMB_MAX_EDGE = 200;
+
+/** 命中最靠前的、包含该点的页面元素 */
+function pageAtClientPoint(
+  container: HTMLElement | null,
+  x: number,
+  y: number
+): { page: number; el: HTMLElement } | null {
+  if (!container) return null;
+  for (const el of Array.from(container.querySelectorAll<HTMLElement>('[data-page]'))) {
+    const r = el.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      return { page: Number(el.getAttribute('data-page')), el };
+    }
+  }
+  return null;
+}
+
+/**
+ * 从某一页的 canvas 里裁出一块，产出主图 + 缩略图。
+ *
+ * 直接裁 pdf.js 渲染好的 canvas，而不是对 DOM 截图：
+ * 画面本身就是位图，裁它最准确，也不会把文本层、记号笔、选区一起拍进去。
+ *
+ * 注意 `canvas.width` 已经乘过 devicePixelRatio，所以要用 canvas 的**显示宽度**
+ * 换算源矩形，不能直接用页面坐标当像素坐标。
+ */
+async function cropPageRegion(
+  pageEl: HTMLElement,
+  sel: { left: number; top: number; right: number; bottom: number }
+): Promise<{ blob: Blob; width: number; height: number; thumb: string } | null> {
+  const canvas = pageEl.querySelector('canvas');
+  if (!canvas) return null;
+
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const sx = Math.max(0, (sel.left - rect.left) * scaleX);
+  const sy = Math.max(0, (sel.top - rect.top) * scaleY);
+  const sw = Math.min(canvas.width - sx, (sel.right - sel.left) * scaleX);
+  const sh = Math.min(canvas.height - sy, (sel.bottom - sel.top) * scaleY);
+  if (sw < 1 || sh < 1) return null;
+
+  const outScale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(sw, sh));
+  const outW = Math.max(1, Math.round(sw * outScale));
+  const outH = Math.max(1, Math.round(sh * outScale));
+
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext('2d');
+  if (!ctx) return null;
+  // PDF 页面是白纸；不铺白底的话，透明区域在 JPEG 里会变成黑色
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, outW, outH);
+  ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, outW, outH);
+
+  const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, 'image/jpeg', 0.85));
+  if (!blob) return null;
+
+  const thumbScale = Math.min(1, THUMB_MAX_EDGE / Math.max(outW, outH));
+  const tw = Math.max(1, Math.round(outW * thumbScale));
+  const th = Math.max(1, Math.round(outH * thumbScale));
+  const thumbCanvas = document.createElement('canvas');
+  thumbCanvas.width = tw;
+  thumbCanvas.height = th;
+  const tctx = thumbCanvas.getContext('2d');
+  if (tctx) {
+    tctx.fillStyle = '#ffffff';
+    tctx.fillRect(0, 0, tw, th);
+    tctx.drawImage(out, 0, 0, tw, th);
+  }
+
+  return { blob, width: outW, height: outH, thumb: thumbCanvas.toDataURL('image/jpeg', 0.7) };
 }
 
 /**

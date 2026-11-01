@@ -10,10 +10,11 @@ import type {
   AIChatNode,
   NodeMarker,
   NodeAttachment,
+  NodeImageRef,
   SessionMicroApps,
   MicroAppId,
 } from '../types';
-import { ATTACHMENT_KEY } from '../types';
+import { ATTACHMENT_KEY, IMAGE_REF_KEY } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
 
 // ===== 类型定义 =====
@@ -89,6 +90,8 @@ interface SessionState {
   setNodeSize: (nodeId: string, size: { width?: number; height?: number }) => void;
   /** 设置或清除节点的附件（存进 metadata，不占用单独的节点字段） */
   setNodeAttachment: (nodeId: string, attachment: NodeAttachment | null) => void;
+  /** 设置或清除节点上的截图引用（图片本体在 IndexedDB 的 images 表） */
+  setNodeImageRef: (nodeId: string, imageRef: NodeImageRef | null) => void;
   updateNodeMarkers: (sessionId: string) => void;
 
   // 批量操作
@@ -791,6 +794,45 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // 清除时把键删掉而不是置 null —— getNodeAttachment 靠「键不存在」判断无附件，
         // 留一个 null 会让 metadata 里堆积无用字段，也会随导出文件一起带出去
         delete metadata[ATTACHMENT_KEY];
+      }
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [activeSessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: { ...node, metadata, updatedAt: Date.now() },
+            },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  /**
+   * 设置或清除节点上的截图引用（Paper 截图问答）。
+   *
+   * 与 setNodeAttachment 同一套写法与同一套理由：图片本体在 IndexedDB 的 images 表，
+   * metadata 里只留引用；清除时删键而不是置 null。
+   */
+  setNodeImageRef: (nodeId, imageRef) => {
+    set((state) => {
+      const { activeSessionId, sessions } = state;
+      if (!activeSessionId) return state;
+
+      const currentSession = sessions[activeSessionId];
+      const node = currentSession.nodes[nodeId];
+      if (!node) return state;
+
+      const metadata = { ...node.metadata };
+      if (imageRef) {
+        metadata[IMAGE_REF_KEY] = imageRef;
+      } else {
+        delete metadata[IMAGE_REF_KEY];
       }
 
       return {

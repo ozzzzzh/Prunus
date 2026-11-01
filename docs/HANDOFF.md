@@ -109,8 +109,9 @@ types/               数据模型
 
 ### 2.4 持久化 —— 最需要小心的部分
 
-**IndexedDB**：库名 `prunus-db`，版本 3。Object store：`sessions` / `nodes` / `settings` / `folders` / `pdfDocs`
+**IndexedDB**：库名 `prunus-db`，版本 **4**。Object store：`sessions` / `nodes` / `settings` / `folders` / `pdfDocs` / `images`
 （`nodes` 建了但**没被仓储层使用**）。版本升级时每个 store 都有 `contains` 守卫，老用户升级不丢数据。
+`pdfDocs`（v3）与 `images`（v4）都是二进制库，**刻意排除在 `saveAll`/`exportAll`/`importAll` 之外** —— 见下方"整表重写"。
 `onblocked` 有显式处理 —— 否则 open 请求"永远不 settle"，应用卡在 Loading。
 
 **⚠️ 保存粒度是「整表重写」。** `repository.session.saveAll()` 是**先清空整个 store 再批量写入**，
@@ -201,6 +202,7 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 | **会话导入导出** | 单会话导出/导入 JSON（**不含凭据**、**不含 PDF 二进制**、只带 docId 引用；导入是**追加合并**，冲突重命名为「（导入）」副本，绝不覆盖本地） | `utils/sessionTransfer.ts` |
 | **引导** | **15 步**动作校验式交互式引导（靠订阅 store 检测真实操作来推进）、欢迎页、情境提示、帮助面板 | `components/onboarding/` |
 | **PDF 微应用** | 打开 PDF、选原文建节点（可挂到当前节点或根节点）、黄色记号笔、按住 Ctrl 点击记号跳回节点、缩放（Ctrl/Cmd+滚轮）、页码记忆、跨页跳转、扫描件提示 | `components/microapps/pdf/` |
+| **截图问答** | PDF 顶栏相机按钮 → 拖框选区 → 缩略图进入输入框 → 发送时挂到该条消息的节点 → 走**视觉模型**就图对话。图片存独立 IndexedDB 表，节点只存引用 + 小缩略图 | `PdfPanel` / `ChatInput` / `imageStore` |
 | **设置** | 深度思考开关；CDK 模式显示剩余额度，BYOK 模式编辑协议/模型/Base URL/Key | `SettingsModal` |
 
 **交互式引导的 15 步**（`types/tour.ts`）：`welcome-filemanager` → `open-session` → `welcome-canvas` →
@@ -275,7 +277,22 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 `vite.config.ts` 里 `/api/llm`、`/api/tencent` 必须排在 `/api/` **之前** ——
 Vite 按对象键的**插入顺序**匹配，`/api/` 在前会吞掉另外两个。（源码里有显式警告注释。）
 
-### 4.8 不可变引用是承重结构
+### 4.8 截图"只发一轮"的规则不能随手改
+
+截图存在节点 metadata 的 `imageRef` 里（图片本体在 IndexedDB）。注入规则在
+`ChatInput.runSubmit` 的祖先链回溯中：
+
+> 自 tip 向根遍历时维护 `sawAssistant`；带图的节点**只有当它到 tip 之间还没出现过
+> assistant 节点**时才注入图片。
+
+效果是：截图后的第一问发图、后续追问不发、从图节点另开分支又会发。
+**这是用户明确要求的"图片不能每轮都进上下文"**，也是它不需要额外"已发送"标记的原因
+（那种标记在请求失败时会错乱）。改动这段之前先想清楚三种分支场景。
+
+配套：图片走**独立的视觉配置**（`apiConfigStore.vision`），未配置时回退到聊天配置；
+只有真的带了图才切换连接，纯文本请求行为不变。
+
+### 4.9 不可变引用是承重结构
 
 项目大量依赖"引用变没变"来决定是否重渲染 / 是否持久化。
 **读-改-写必须在一次 `set` 里完成**；"返回原 state 引用"是被当作显式跳过信号在用的。

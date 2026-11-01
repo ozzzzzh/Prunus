@@ -306,3 +306,49 @@ export function getNodeAttachment(node: PrunusNode): NodeAttachment | null {
     text: a.text,
   };
 }
+
+// ===== Paper 截图附件 =====
+
+/**
+ * 节点上挂的截图引用。
+ *
+ * **只存引用，不存 base64**：图片本体在 IndexedDB 的 `images` 表里（见 utils/imageStore.ts）。
+ * 塞进 metadata 的话，每次防抖保存的「整表重写」都会把几十 MB 图片重写一遍。
+ *
+ * `thumb` 是唯一以 data URL 形式留在 metadata 里的东西（长边 200px，约 10KB）——
+ * 让节点卡片能同步画出缩略图，不必为每个节点异步读一次 IndexedDB。
+ */
+export interface NodeImageRef {
+  /** 内容哈希，`images` 表的主键 */
+  imageId: string;
+  width: number;
+  height: number;
+  /** 截自哪一页（1-based）与哪份文档，用于跳回原文 */
+  page?: number;
+  docId?: string;
+  /** 小缩略图 data URL；旧数据可能没有 */
+  thumb?: string;
+  createdAt: number;
+}
+
+export const IMAGE_REF_KEY = 'imageRef';
+
+/** 与 getNodeAttachment 同一套守卫理由：metadata 可能来自导入的 JSON */
+export function getNodeImageRef(node: PrunusNode): NodeImageRef | null {
+  const raw = node.metadata?.[IMAGE_REF_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+
+  const r = raw as Record<string, unknown>;
+  if (typeof r.imageId !== 'string' || !r.imageId) return null;
+
+  return {
+    imageId: r.imageId,
+    // 尺寸只影响展示，缺失时给 0，不必因此丢掉整张图
+    width: typeof r.width === 'number' ? r.width : 0,
+    height: typeof r.height === 'number' ? r.height : 0,
+    page: typeof r.page === 'number' ? r.page : undefined,
+    docId: typeof r.docId === 'string' ? r.docId : undefined,
+    thumb: typeof r.thumb === 'string' ? r.thumb : undefined,
+    createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
+  };
+}

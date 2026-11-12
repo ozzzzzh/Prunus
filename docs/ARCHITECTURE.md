@@ -36,7 +36,9 @@
 Prunus 是一个**树状对话管理器**：一次与 AI 的对话不再是一条线性消息流，而是一棵由节点构成的对话树。
 用户可以从任意节点分叉，每个分支**各自携带自己的上下文**。
 
-在此之上还挂着一个**微应用**体系：目前唯一实现是 PDF 阅读器（Prunus Paper）。
+在此之上还挂着一个**微应用**体系：PDF 阅读器（Prunus Paper）把原文摘录成节点；
+Prompt 工作台（Prunus Prompt）用发散 + 勾选把模糊议题收敛成一棵决策树。
+两者都是"挂在会话上的独立工具"，互不干扰。
 微应用占据画布左侧，把原文摘录成画布节点，让"读"和"想"发生在同一个界面里。
 
 ### 1.1 两个核心概念
@@ -44,7 +46,7 @@ Prunus 是一个**树状对话管理器**：一次与 AI 的对话不再是一�
 | 概念 | 含义 | 归属 |
 |---|---|---|
 | **会话（Session）** | 一棵节点树 + 当前焦点 + 会话级设置（全局提示词、微应用状态） | IndexedDB `sessions` |
-| **微应用（MicroApp）** | 挂在**会话**上的垂直工具面板，目前只有 PDF 阅读器 | `session.microApps.pdf` |
+| **微应用（MicroApp）** | 挂在**会话**上的垂直工具面板：PDF 阅读器 / Prompt 工作台 | `session.microApps.*` |
 
 ### 1.2 一张图看懂
 
@@ -280,6 +282,7 @@ interface PdfMicroAppState {
 | `useDialogStore` | confirm / prompt / toast | ❌ 内存 | — |
 | `usePdfViewerStore` | 「跳到某页」的跨组件信号 | ❌ 内存 | — |
 | `useImageDraftStore` | 待发送的截图草稿 | ❌ 内存 | — |
+| `useMicroAppNodeTypesStore` | 微应用按需贡献给画布的节点类型 | ❌ 内存（加载后常驻） | — |
 | `useChatStore` | **向后兼容门面**（@deprecated） | — | — |
 
 `useUIStore` 的 `partialize` 只持久化引导相关字段与偏好，**不持久化**选择模式、微应用开关等瞬态 UI 状态。
@@ -540,10 +543,12 @@ flowchart LR
 
 三条边界（来自 `types/microApp.ts` 的注释，改之前先读）：
 
-1. **状态属于会话，不属于应用**：切会话切的就是这里读到的文档。
-2. **微应用不"操作"主应用**：它只产出一段摘录（原文 + 出处），把摘录变成什么节点由主应用决定。
-3. **没有插件系统**：`registry.tsx` 是一张长度为 1 的表；加第二个微应用是"加一行"，
-   但刻意不做沙箱、第三方加载、权限模型 —— 只用一个例子设计出来的扩展接口几乎一定是错的。
+1. **状态属于会话，不属于应用**：PDF 跟着对话切换；Prompt 的整棵树就是会话里的节点。
+2. **微应用不"操作"主应用**：PDF 只产出一段摘录（原文 + 出处）；Prompt 只往会话里
+   加/改自己的节点。它们都不直接操作画布的视图状态。
+3. **没有插件系统**：`registry.tsx` 是一张表；加微应用是"加一行"。现在有两行
+   （`pdf` / `prompt`），接口仍然只有 `load` 和可选的 `loadNodeTypes` ——
+   刻意不做沙箱、第三方加载、权限模型。
 
 ### 8.2 宿主与生命周期
 
@@ -561,6 +566,8 @@ sequenceDiagram
   L->>UI: setActiveMicroApp('pdf')
   H->>R: MICRO_APPS.pdf.load()
   R-->>H: 动态 import → PdfPanel
+  H->>R: MICRO_APPS.pdf.loadNodeTypes()
+  R-->>H: 节点类型（PDF 没有，返回空）
   H->>H: 渲染 <PdfPanel sessionId />
   Note over H: 面板宿主常驻挂载（内部 return null）<br/>避免条件渲染导致画布重挂载、丢失视口
   U->>H: 拖动分隔条
@@ -570,6 +577,10 @@ sequenceDiagram
 - 面板宽度存在 `uiStore.microAppWidth`，渲染时写进 CSS 变量 `--micro-app-w`；
   拖动过程中**只改变量**，等松手再写 store。
 - 窄屏（`MIN_VIEWPORT_PX` 以下）打开微应用会自动收起，靠 `matchMedia` 监听。
+- **节点类型也按需加载**：`MicroAppDescriptor.loadNodeTypes` 可选，加载后注册进
+  `useMicroAppNodeTypesStore`，`ChatCanvas` 再把它合并到 `nodeTypes`。这样主应用的
+  `MessageNode` 保持原样，聊天会话永远不会带上别的微应用的节点代码。
+  过期数据（例如 Prompt 节点在类型还没加载时）会先按 `message` 渲染一帧，加载完再切换。
 
 ### 8.3 PDF 面板的分层渲染
 
@@ -762,6 +773,85 @@ PDF 文本层是普通 `<div>`，拖选文字不会让任何元素获得焦点�
 
 撤销/重做是例外：它是全局动作，用户刚在 PDF 上画完记号（焦点还在面板里）时恰恰最需要它。
 
+### 8.11 Prunus Prompt（提示词工作台）
+
+把"写提示词"变成"做选择"：用户给一个模糊议题，LLM 每次发散出几个方向，
+用户勾选需要的，逐层细分；右侧画布是决策树，左侧面板实时把它渲染成层级型提示词。
+
+#### 独立会话 + 独立节点外观
+
+- Prompt 是**独立会话**（`microApps.prompt` 存在即算），不从聊天会话"开个开关"：
+  根节点就是议题，树上所有节点都由发散产生，混进聊天记录会让两者都变含糊。
+- 节点类型仍是 `ai-chat`，只加 metadata（`promptNode` / `promptRoot`），
+  所以删除、撤销、持久化、导出全部复用现有能力。
+- 画布外观由 `PromptNode` 负责，经 `loadNodeTypes` 按需加载（见 §8.2）。
+  `MessageNode` 一行都不用改 —— 这是"到不同的地方穿不同的衣服"。
+
+#### 数据与动作
+
+```ts
+session.microApps.prompt = { optionCount: number }   // 2–6，默认 3
+node.metadata.promptNode = { selected?, why?, batchId?, expanded?, done? }
+node.metadata.promptRoot = true                       // 议题根
+```
+
+| 动作 | 说明 |
+|---|---|
+| `addPromptProposals({ sessionId, parentId, items, batchId })` | 批量创建**未勾选**节点；一步撤销；不移动 `currentNodeId` |
+| `setPromptNodeMeta(sessionId, nodeId, patch)` | 勾选 / 已展开 / 已足够具体；可撤销 |
+| `deleteNode` | 复用现有删除；未选项也走它 |
+| `expandPromptNode(sessionId, nodeId)` | 唯一需要模型的环节：发散 / 补齐（`utils/promptExpand.ts`） |
+
+#### 一次发散的时序
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as 用户
+  participant N as PromptNode
+  participant E as utils/promptExpand
+  participant API as 聊天模型
+  participant S as sessionStore
+
+  U->>N: 勾选一个节点 → 点「细分」
+  N->>E: expandPromptNode(sessionId, nodeId)
+  E->>E: 组装上下文：议题 + 路径 + 已想过的标题 + 已有子项
+  E->>API: /chat/completions（JSON 输出，temperature 0.7）
+  API-->>E: { done, items: [{title, why}] }
+  alt done 或空数组
+    E->>S: setPromptNodeMeta(expanded, done)
+  else 有结果
+    E->>S: addPromptProposals(整批，默认未勾选)
+  end
+  S-->>N: 画布出现新节点
+  S-->>Panel: 左侧提示词重算
+```
+
+#### 左侧的层级型提示词
+
+`utils/promptOutline.ts` 是纯函数：只沿**已勾选**的节点往下走，输出
+
+- `# 议题`
+- `## 已确定的决策`（嵌套列表，树长什么样就写什么样）
+- `## 还可以继续细分`（勾了但还没下文的）
+- `## 已排除`（考虑过但没勾的）
+
+所以它是真正实时的 —— 每次勾选/删除都不需要网络，也不会因为流式回填而跳动。
+没有"AI 润色"这一层：面板就是树的投影，复制即用。
+
+#### 补齐
+
+发散默认给 `optionCount` 个。用户删掉其中几个后，父节点上出现一个
+**创意图标（Wand2）**；点击才补，补的数量 = 缺口，且把同层已有标题发给模型去重。
+不自动补，也不因为"数量不足"打扰用户。议题根同样适用（它也是一批选项的父节点）。
+
+#### 画布与会话
+
+- Prompt 模式下画布**每次节点数变化都 fitView**（`maxZoom: 1`）：如果只靠"焦点跟随"，
+  面板占掉左侧 560px 后最左的兄弟分支会躲到面板底下，点不到也看不见。
+- Prompt 会话即使关掉面板也不显示聊天输入框；切回普通会话时自动收起 Prompt 面板，
+  把画布和输入框还回去（判断依据都是 `session.microApps.prompt`）。
+
 ---
 
 ## 9. LLM 接入层
@@ -885,6 +975,11 @@ stateDiagram-v2
 13. **元数据读取一律带守卫**：`metadata` 可能来自导入的 JSON，脏数据只该让一个角标不显示，不该让整棵树崩掉。
 14. **图片不进每轮上下文**：规则见 §7.3，靠 `sawAssistant` 无状态判断，不要加"已发送"标记
     （请求失败时那种标记会错乱）。
+15. **微应用的节点外观按需注册**：不要为了让 Prompt 节点好看去改 `MessageNode`。
+    通过 `registry.loadNodeTypes` 注册一个独立组件，主应用的聊天节点不背这份逻辑。
+    加载后**不注销**（已渲染的节点需要它），隔离靠"不进首屏包 + 聊天会话用不到"。
+16. **Prompt 的 LLM 请求必须带 `sessionId`**：请求是异步的，期间用户可能切走；
+    `addPromptProposals` / `setPromptNodeMeta` 显式接收会话 id，不要读 `activeSessionId`。
 
 ---
 
@@ -970,6 +1065,7 @@ src/
 │   ├── dialogStore.ts          confirm / prompt / toast
 │   ├── pdfViewerStore.ts       「跳到某页」跨组件信号
 │   ├── imageDraftStore.ts      待发送截图草稿
+│   ├── microAppNodeTypes.ts    微应用按需注册的画布节点类型
 │   └── chatStore.ts            @deprecated 兼容门面
 ├── services/persistenceService.ts  初始化、防抖自动保存、导入导出、清空
 ├── repository/                 仓储接口 + IndexedDB 实现
@@ -988,6 +1084,9 @@ src/
 │   ├── nodeSearch.ts           本地关键字检索
 │   ├── jevClient.ts            JEV 语义检索（需社区后端）
 │   ├── sessionTransfer.ts      单会话导出 / 导入
+│   ├── promptSession.ts        新建 Prompt 会话（三个入口共用）
+│   ├── promptExpand.ts         发散 / 补齐的 LLM 调用
+│   ├── promptOutline.ts        决策树 → 层级型提示词（纯函数）
 │   ├── docHash.ts              内容哈希（SHA-256 / FNV-1a 降级）
 │   ├── pdfjs.ts                pdf.js 统一引导（worker + 侧载资源）
 │   ├── pdfPaging.ts            连续滚动的分页几何
@@ -1017,11 +1116,14 @@ src/
 │   │   ├── registry.tsx        微应用清单（动态 import）
 │   │   ├── MicroAppHost.tsx    宿主：面板容器 + 分隔条 + 焦点作用域
 │   │   ├── MicroAppLauncher.tsx 右上角入口
-│   │   └── pdf/
-│   │       ├── PdfPanel.tsx        顶栏、滚动分页、选区气泡、截图、翻译编排
-│   │       ├── PdfPageView.tsx     canvas + 文本层 + 记号笔层 + 译文层
-│   │       ├── TranslationBox.tsx  译文白块、字号拟合、悬停工具条
-│   │       └── pdfTextLayer.css    文本层与选中样式
+│   │   ├── pdf/
+│   │   │   ├── PdfPanel.tsx        顶栏、滚动分页、选区气泡、截图、翻译编排
+│   │   │   ├── PdfPageView.tsx     canvas + 文本层 + 记号笔层 + 译文层
+│   │   │   ├── TranslationBox.tsx  译文白块、字号拟合、悬停工具条
+│   │   │   └── pdfTextLayer.css    文本层与选中样式
+│   │   └── prompt/
+│   │       ├── PromptPanel.tsx     左侧：议题输入 + 实时层级提示词 + 复制
+│   │       └── PromptNode.tsx      画布节点：勾选 / 细分 / 补齐 / 删除
 │   ├── markdown/MarkdownText.tsx   统一 Markdown 渲染（含流式分段）
 │   └── onboarding/             引导、帮助、完成弹窗
 └── index.css                   主题色、画布纹理、Markdown prose、滚动条

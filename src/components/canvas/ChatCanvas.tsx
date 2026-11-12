@@ -23,7 +23,9 @@ import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { useNodeSizeStore } from '../../store/nodeSizeStore';
 import { useUIStore } from '../../store/uiStore';
+import { useMicroAppNodeTypesStore } from '../../store/microAppNodeTypes';
 import { isAIChatNode } from '../../types';
+import { getPromptNodeMeta, isPromptRoot } from '../../types/microApp';
 import type { SummaryNodeInput } from '../../utils/summarize';
 import { cn } from '../../utils/cn';
 import { resolveNodeSize } from '../../utils/nodeSize';
@@ -50,7 +52,14 @@ const FOCUS_ZOOM = 1.2;
  */
 const FOCUS_OFFSET_Y = 60;
 
-const nodeTypes = {
+/**
+ * 主应用自带、永远存在的节点类型。
+ *
+ * 微应用贡献的类型（例如 Prompt 的 `prompt`）不写在这里，而是在打开对应
+ * 微应用时由 registry 动态加载、合并进来 —— 这样聊天会话永远不会把
+ * Prompt 的节点组件和逻辑带进包里。
+ */
+const BASE_NODE_TYPES = {
   message: MessageNode,
 };
 
@@ -104,6 +113,26 @@ export default function ChatCanvas() {
   const isSearchOpen = useUIStore(state => state.isSearchOpen);
   const setSearchOpen = useUIStore(state => state.setSearchOpen);
   const searchActiveNodeId = useUIStore(state => state.searchActiveNodeId);
+  const activeMicroApp = useUIStore(state => state.activeMicroApp);
+  /**
+   * Prompt 模式下隐藏聊天树专用的操作，避免把用户从发散流程里带偏。
+   * 以会话本身为准（面板被关掉时仍然是 Prompt 会话），否则关掉面板就会
+   * 冒出一个"新增子节点"按钮，点下去还会长出聊天节点。
+   */
+  const isPromptMode =
+    activeMicroApp === 'prompt' ||
+    Boolean(activeSessionId && sessions[activeSessionId]?.microApps?.prompt);
+
+  /**
+   * 微应用贡献的节点类型。只有真的打开过对应微应用才会有内容；
+   * 合并进来之后画布就能渲染 Prompt 的节点外观，而 MessageNode 一行都不用改。
+   */
+  const microAppNodeTypes = useMicroAppNodeTypesStore(state => state.nodeTypes);
+  const nodeTypes = useMemo(
+    () => ({ ...BASE_NODE_TYPES, ...microAppNodeTypes }),
+    [microAppNodeTypes]
+  );
+  const promptNodeReady = Boolean(microAppNodeTypes.prompt);
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
 
@@ -112,7 +141,8 @@ export default function ChatCanvas() {
   const hasGlobalPrompt = Boolean(session?.globalPrompt?.trim());
 
   // React Flow instance for programmatic view control
-  const { setCenter, getZoom, getViewport, getNode } = useReactFlow();
+  // 重命名避免和 <ReactFlow fitView>（布尔 prop）同名
+  const { setCenter, getZoom, getViewport, getNode, fitView: fitViewport } = useReactFlow();
   // 画布容器尺寸（为 0 表示 React Flow 还没测量完，此时居中会算错，必须等）
   const paneWidth = useStore(state => state.width);
   const paneHeight = useStore(state => state.height);
@@ -158,15 +188,30 @@ export default function ChatCanvas() {
       // 尺寸来源与布局完全一致（measuredSizes 就是卡片的实测高度），不存在双真源。
       const { width, height } = resolveNodeSize(node, measuredSizes[node.id]);
 
+      /**
+       * Prompt 节点走微应用自己的渲染器。
+       *
+       * `promptNodeReady` 很重要：节点类型是异步加载的，在它到位之前如果直接写
+       * `type: 'prompt'`，React Flow 会报"找不到节点类型"并渲染成默认节点。
+       * 等类型注册好之后 `initialNodes` 会重算一次，节点自然切换过去。
+       */
+      const promptRoot = promptNodeReady && isPromptRoot(node);
+      const promptChild = promptNodeReady && getPromptNodeMeta(node) !== null;
+
       nodes.push({
         id: node.id,
-        type: 'message',
+        type: promptRoot || promptChild ? 'prompt' : 'message',
         position: { x: 0, y: 0 }, // 由 getLayoutedElements 计算
         width,
         height,
         // isSearchHit 是渲染相关字段 —— 加进 MessageNode 的 arePropsEqual 白名单，
         // 否则检索高亮会因为 memo 命中而刷不出来
-        data: { node, isActive: isCurrentFocus, isSearchHit: searchActiveNodeId === node.id },
+        data: {
+          node,
+          isActive: isCurrentFocus,
+          isSearchHit: searchActiveNodeId === node.id,
+          promptRoot,
+        },
       });
 
       node.childrenIds.forEach(childId => {
@@ -188,7 +233,7 @@ export default function ChatCanvas() {
     });
 
     return getLayoutedElements(nodes, edges, 'TB', measuredSizes);
-  }, [session, sizeStates, measuredSizes, searchActiveNodeId]);
+  }, [session, sizeStates, measuredSizes, searchActiveNodeId, promptNodeReady]);
 
   // Using controlled state for React Flow to allow interactions if needed
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -273,6 +318,28 @@ export default function ChatCanvas() {
 
     focusCurrentNode();
   }, [paneWidth, paneHeight, focusCurrentNode]);
+
+  /**
+   * Prompt 会话：整棵树始终放进视口。
+   *
+   * 为什么不能只靠上面那条"焦点跟随"：它只在当前节点**出视野**时才动镜头。
+   * 面板打开后画布左边让出 560px，而焦点（议题根）仍然在视野里，于是镜头不动，
+   * 最左侧的兄弟分支就躲到面板底下了 —— 用户点不到、也看不见。
+   *
+   * 每次节点数量变化都重算一次（去抖用同样的 PANE_SETTLE_MS）。
+   * `maxZoom: 1` 是关键：树还只有根节点时 fitView 会放大到 1.5 倍，
+   * 之后长出的分支会被放大后的视口挤出左侧。
+   */
+  const promptNodeCount = isPromptMode ? initialNodes.length : 0;
+  useEffect(() => {
+    if (!isPromptMode || paneWidth <= 0 || paneHeight <= 0) return;
+
+    const timer = setTimeout(() => {
+      void fitViewport({ padding: 0.18, duration: 300, maxZoom: 1 });
+    }, PANE_SETTLE_MS);
+
+    return () => clearTimeout(timer);
+  }, [isPromptMode, activeSessionId, paneWidth, paneHeight, promptNodeCount, fitViewport]);
 
   /**
    * 在当前激活节点下新增一个子节点，并直接进入编辑态让用户能立刻打字。
@@ -626,28 +693,33 @@ export default function ChatCanvas() {
       </ReactFlow>
       
       {/* 右下角悬浮操作组，自上而下：新增子节点 → 收缩 → 聚焦。
-          焦点按钮保持原位（bottom-32），新按钮一律往上排，避免既有按钮位移。 */}
+          焦点按钮保持原位（bottom-32），新按钮一律往上排，避免既有按钮位移。
+          Prompt 模式下前两个属于"聊天树"的操作，会把用户从发散流程里带偏，隐藏。 */}
       <div className="absolute bottom-32 right-8 z-10 flex flex-col gap-2">
-        <button
-          onClick={handleAddChildNode}
-          disabled={isSelectingMode}
-          title={
-            isSelectingMode
-              ? '多选模式下不可新增节点'
-              : '在当前节点下新增子节点'
-          }
-          className={cn(FLOATING_BTN_CLASS, FLOATING_BTN_DISABLED_CLASS)}
-        >
-          <Plus size={20} />
-        </button>
+        {!isPromptMode && (
+          <button
+            onClick={handleAddChildNode}
+            disabled={isSelectingMode}
+            title={
+              isSelectingMode
+                ? '多选模式下不可新增节点'
+                : '在当前节点下新增子节点'
+            }
+            className={cn(FLOATING_BTN_CLASS, FLOATING_BTN_DISABLED_CLASS)}
+          >
+            <Plus size={20} />
+          </button>
+        )}
 
-        <button
-          onClick={handleToggleCollapseOthers}
-          title={canRestoreCollapse ? '还原上一次收缩的节点' : '收缩除当前节点外的所有节点'}
-          className={FLOATING_BTN_CLASS}
-        >
-          {canRestoreCollapse ? <ChevronsUpDown size={20} /> : <ChevronsDownUp size={20} />}
-        </button>
+        {!isPromptMode && (
+          <button
+            onClick={handleToggleCollapseOthers}
+            title={canRestoreCollapse ? '还原上一次收缩的节点' : '收缩除当前节点外的所有节点'}
+            className={FLOATING_BTN_CLASS}
+          >
+            {canRestoreCollapse ? <ChevronsUpDown size={20} /> : <ChevronsDownUp size={20} />}
+          </button>
+        )}
 
         <button
           onClick={handleFocusLatestNode}
@@ -658,8 +730,8 @@ export default function ChatCanvas() {
         </button>
       </div>
 
-      {/* 节点总结入口 */}
-      {isSelectingMode ? (
+      {/* 节点总结入口（Prompt 模式下不出现：那是聊天树的操作） */}
+      {isSelectingMode && !isPromptMode ? (
         <>
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-leaf-50 border border-leaf-100 text-sm text-leaf-700 shadow-sm pointer-events-none">
             <span>点击节点多选</span>
@@ -700,30 +772,34 @@ export default function ChatCanvas() {
             <Search size={14} />
             搜索
           </button>
-          <button
-            onClick={() => setShowGlobalPrompt(true)}
-            className={cn(
-              TOP_PILL_CLASS,
-              hasGlobalPrompt && 'bg-leaf-50 text-leaf-700 border-leaf-200'
-            )}
-            title="编辑会话背景约束"
-          >
-            <BookOpen size={14} />
-            会话背景
-            {hasGlobalPrompt && <span className="w-1.5 h-1.5 rounded-full bg-leaf-500" />}
-          </button>
-          <button
-            onClick={() => {
-              // 与检索面板互斥（它俩都占画布上方区域）
-              setSearchOpen(false);
-              enterSelectingMode();
-            }}
-            className={TOP_PILL_CLASS}
-            title="选择多个节点进行知识总结"
-          >
-            <Sparkles size={14} />
-            节点总结
-          </button>
+          {!isPromptMode && (
+            <button
+              onClick={() => setShowGlobalPrompt(true)}
+              className={cn(
+                TOP_PILL_CLASS,
+                hasGlobalPrompt && 'bg-leaf-50 text-leaf-700 border-leaf-200'
+              )}
+              title="编辑会话背景约束"
+            >
+              <BookOpen size={14} />
+              会话背景
+              {hasGlobalPrompt && <span className="w-1.5 h-1.5 rounded-full bg-leaf-500" />}
+            </button>
+          )}
+          {!isPromptMode && (
+            <button
+              onClick={() => {
+                // 与检索面板互斥（它俩都占画布上方区域）
+                setSearchOpen(false);
+                enterSelectingMode();
+              }}
+              className={TOP_PILL_CLASS}
+              title="选择多个节点进行知识总结"
+            >
+              <Sparkles size={14} />
+              节点总结
+            </button>
+          )}
         </div>
       )}
 

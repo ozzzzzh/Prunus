@@ -12,8 +12,13 @@
 
 import type { PrunusNode } from './node';
 
-/** 已实现的微应用。加第二个时这里加一项，下面的联合类型会自动跟上 */
-export type MicroAppId = 'pdf';
+/**
+ * 已实现的微应用。
+ *
+ * - `pdf`：Paper 阅读器（原文选区 → 画布节点）
+ * - `prompt`：Prompt 工作台（LLM 发散 + 用户勾选，把模糊议题收敛成一棵决策树）
+ */
+export type MicroAppId = 'pdf' | 'prompt';
 
 /**
  * 微应用面板根节点的标记属性。
@@ -114,8 +119,76 @@ export interface PdfTranslation {
   createdAt: number;
 }
 
+// ===== Prunus Prompt（提示词工作台）=====
+
+/**
+ * Prompt 微应用在某个会话上的状态。
+ *
+ * 树本身**不在这里** —— 它就是会话里的节点，靠节点 metadata 上的
+ * `promptNode` 标记识别。这里只放"整棵树共用"的少量设置，
+ * 这样勾选、细分、删除全部走 sessionStore，撤销与持久化都是现成的。
+ */
+export interface PromptMicroAppState {
+  /** 每次发散提供几个选项（2–6，默认 3）。删除后可按这个数补齐 */
+  optionCount: number;
+}
+
+/**
+ * 一个"发散出来的选项"节点上的标记。
+ *
+ * 节点类型仍是 `ai-chat`：这样删除、撤销、导出、布局全都不用改，
+ * 只靠 metadata 决定画布上用哪个渲染器（见 registry 的 loadNodeTypes）。
+ */
+export interface PromptNodeMeta {
+  /** 用户是否勾选。默认 false（需求：默认不选，由用户表达意图） */
+  selected?: boolean;
+  /** LLM 给出的一句话理由：定这一项会影响什么 */
+  why?: string;
+  /** 同一批发散的批次 id，用于补齐时去重与识别 */
+  batchId?: string;
+  /** 已经发散过（避免重复请求） */
+  expanded?: boolean;
+  /** LLM 判断这一项已经足够具体，继续拆分没有价值 */
+  done?: boolean;
+}
+
+export const PROMPT_NODE_KEY = 'promptNode';
+/** 会话根节点上的标记：这个节点是 Prompt 里的"议题" */
+export const PROMPT_ROOT_KEY = 'promptRoot';
+
+/**
+ * 安全取出 Prompt 节点标记。
+ *
+ * 与 getNodeAttachment 同一套守卫理由：metadata 的内容可能来自导入的 JSON，
+ * 脏数据只该让这个节点少一个样式，不该让整个画布渲染崩掉。
+ */
+export function getPromptNodeMeta(node: PrunusNode): PromptNodeMeta | null {
+  const raw = node.metadata?.[PROMPT_NODE_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+
+  const meta = raw as Record<string, unknown>;
+  return {
+    selected: meta.selected === true,
+    why: typeof meta.why === 'string' ? meta.why : undefined,
+    batchId: typeof meta.batchId === 'string' ? meta.batchId : undefined,
+    expanded: meta.expanded === true,
+    done: meta.done === true,
+  };
+}
+
+/** 这个节点是不是 Prompt 的议题根 */
+export function isPromptRoot(node: PrunusNode): boolean {
+  return node.metadata?.[PROMPT_ROOT_KEY] === true;
+}
+
+/** 这个会话是不是 Prompt 会话（微应用状态存在即算） */
+export function isPromptSession(microApps: SessionMicroApps | undefined): boolean {
+  return Boolean(microApps?.prompt);
+}
+
 export interface SessionMicroApps {
   pdf?: PdfMicroAppState;
+  prompt?: PromptMicroAppState;
 }
 
 /**

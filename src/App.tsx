@@ -39,6 +39,10 @@ function App() {
 
   const folderItems = useFolderStore(state => state.items);
   const activeMicroApp = useUIStore(state => state.activeMicroApp);
+  /** Prompt 会话即使面板被关掉，也仍然是 Prompt 会话 —— 聊天输入框不该出现 */
+  const isPromptSession = Boolean(
+    activeSessionId ? sessions[activeSessionId]?.microApps?.prompt : false
+  );
   const microAppWidth = useUIStore(state => state.microAppWidth);
   const microAppResizing = useUIStore(state => state.isResizingMicroApp);
   const mode = useAPIConfigStore(state => state.config.mode);
@@ -120,6 +124,31 @@ function App() {
   useEffect(() => {
     document.documentElement.style.setProperty('--micro-app-w', `${microAppWidth}px`);
   }, [microAppWidth]);
+
+  /**
+   * 切到 Prompt 会话时自动打开工作台。
+   *
+   * `activeMicroApp` 刻意不持久化（每次启动都关着面板）。如果不补这一步，
+   * 刷新后 Prompt 会话看上去和普通画布一样：输入框在、节点长得像聊天卡片。
+   * 只在"当前没有打开任何微应用"时接管，用户手动关掉面板后不会再被弹出来。
+   */
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    const session = useSessionStore.getState().sessions[activeSessionId];
+    const active = useUIStore.getState().activeMicroApp;
+
+    if (session?.microApps?.prompt) {
+      if (!active) useUIStore.getState().setActiveMicroApp('prompt');
+      return;
+    }
+
+    // 切到普通会话：Prompt 工作台对这个会话没有意义。不收起来的话，
+    // 聊天输入框会一直隐藏（它是按 activeMicroApp 判断的），用户会以为功能坏了。
+    if (active === 'prompt') {
+      useUIStore.getState().setActiveMicroApp(null);
+    }
+  }, [activeSessionId]);
 
   // 获取当前会话所在的文件夹路径（面包屑）
   const breadcrumbs = useMemo(() => {
@@ -273,7 +302,10 @@ function App() {
             {expandedNodeId ? <ExpandedView /> : <ChatCanvas />}
           </ReactFlowProvider>
         </div>
-        <ChatInput />
+        {/* Prompt 会话的输入由左侧面板负责；底部的聊天输入框在这里没有意义，
+            留着只会让人以为可以直接对话。用会话本身的标记判断，
+            面板被关掉时也不会把聊天输入框放出来。 */}
+        {activeMicroApp !== 'prompt' && !isPromptSession && <ChatInput />}
       </main>
 
       <SettingsModal />

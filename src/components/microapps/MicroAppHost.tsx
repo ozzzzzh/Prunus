@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUIStore, clampMicroAppWidth } from '../../store/uiStore';
+import { useMicroAppNodeTypesStore } from '../../store/microAppNodeTypes';
 import { cn } from '../../utils/cn';
 import { MICRO_APPS, type MicroAppPanelProps } from './registry';
 import { MICRO_APP_PANEL_ATTR } from '../../types/microApp';
@@ -84,6 +85,34 @@ export default function MicroAppHost() {
       })
       .catch((err) => {
         console.error('[MicroApp] 加载失败:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMicroApp]);
+
+  /**
+   * 按需加载微应用贡献的**画布节点类型**。
+   *
+   * 加载后常驻（register 会合并到 store），不随面板关闭注销：已经渲染的节点
+   * 没有组件就会掉成默认节点。这里做到的隔离是"不进首屏包、聊天会话永远用不到"，
+   * 而不是"关掉就把已挂载的组件摘掉"。
+   */
+  useEffect(() => {
+    if (!activeMicroApp) return;
+
+    const descriptor = MICRO_APPS[activeMicroApp];
+    if (!descriptor.loadNodeTypes) return;
+
+    let cancelled = false;
+    descriptor
+      .loadNodeTypes()
+      .then((types) => {
+        if (!cancelled) useMicroAppNodeTypesStore.getState().register(types);
+      })
+      .catch((err) => {
+        console.error('[MicroApp] 节点类型加载失败:', err);
       });
 
     return () => {

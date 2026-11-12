@@ -203,6 +203,7 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 | **引导** | **15 步**动作校验式交互式引导（靠订阅 store 检测真实操作来推进）、欢迎页、情境提示、帮助面板 | `components/onboarding/` |
 | **PDF 微应用** | 打开 PDF、选原文建节点（可挂到当前节点或根节点）、**多色记号笔（只标注不建节点）**、**涂改液式翻译（白块盖住原文显示中文译文）**、按住 Ctrl 点击"已建节点"的记号跳回节点、缩放（Ctrl/Cmd+滚轮）、页码记忆、跨页跳转、扫描件提示 | `components/microapps/pdf/` |
 | **截图问答** | PDF 顶栏相机按钮 → 拖框选区 → 缩略图进入输入框 → 发送时挂到该条消息的节点 → 走**视觉模型**就图对话。图片存独立 IndexedDB 表，节点只存引用 + 小缩略图 | `PdfPanel` / `ChatInput` / `imageStore` |
+| **Prompt 工作台** | 独立 Prompt 会话：输入议题 → LLM 每次发散 2–6 个方向（默认 3）→ 用户勾选（**默认不选**）→ 逐层细分 → 左侧面板实时渲染层级型提示词，可复制。未选项保留为低权重虚线卡，可删除；删除后父节点出现**创意图标（Wand2）**按缺口补齐。**没有产物类型选择**，coding / 剧本走同一套 | `components/microapps/prompt/` + `utils/prompt*` |
 | **设置** | 深度思考开关；CDK 模式显示剩余额度，BYOK 模式编辑协议/模型/Base URL/Key | `SettingsModal` |
 
 **交互式引导的 15 步**（`types/tour.ts`）：`welcome-filemanager` → `open-session` → `welcome-canvas` →
@@ -380,6 +381,22 @@ PDF 页面是位图，不能回流 —— 译文只能覆盖，不可能把下�
 必须把**白底矩形一起撤掉**，否则露出来的是一块白。删除才算一次编辑。
 译文里允许 `**加粗**`（提示词第 7 条），渲染层解析成 `<strong>`，不解析任何 HTML。
 翻译调用复用主聊天模型（`utils/translate.ts`），**没有独立配置项**。
+
+### 4.14 微应用的节点外观按需注册，不要改 MessageNode
+
+Prompt 的节点（勾选框、细分按钮、虚线未选态）是**独立组件** `PromptNode`，
+通过 `registry.loadNodeTypes` 在打开微应用时注册进 `useMicroAppNodeTypesStore`，
+`ChatCanvas` 再合并到 React Flow 的 `nodeTypes`。
+
+几条不能破的：
+
+1. **不要把 Prompt 的状态塞进 `MessageNode`** —— 主应用的每个聊天节点都会背上这份逻辑。
+2. **加载后不注销**：已经渲染的 Prompt 节点需要它。隔离靠"不进首屏包 + 聊天会话用不到"。
+3. **节点类型到位前先用 `message` 渲染**：否则 React Flow 会报找不到类型，渲染成默认节点。
+4. **Prompt 的发散请求必须显式传 `sessionId`**：LLM 调用是异步的，期间用户可能切会话；
+   `addPromptProposals` / `setPromptNodeMeta` 都不读 `activeSessionId`。
+5. Prompt 会话即使面板关掉，也**不显示聊天输入框**（以 `session.microApps.prompt` 判断，
+   不是以 `activeMicroApp` 判断）；切换回 Prompt 会话时会自动打开面板。
 
 ---
 

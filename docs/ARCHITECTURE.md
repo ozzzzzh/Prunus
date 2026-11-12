@@ -26,7 +26,7 @@
 10. [界面结构与页面状态](#10-界面结构与页面状态)
 11. [结构性约束](#11-结构性约束)
 12. [技术债与未使用代码](#12-技术债与未使用代码)
-13. [验证方式](#13-验证方式)
+13. [开发、部署与验证](#13-开发部署与验证)
 14. [文件索引](#14-文件索引)
 
 ---
@@ -906,9 +906,9 @@ stateDiagram-v2
 
 ---
 
-## 13. 验证方式
+## 13. 开发、部署与验证
 
-仓库没有测试基础设施，验证一律把应用跑起来：
+### 13.1 本地开发
 
 ```bash
 npm install
@@ -917,7 +917,24 @@ npm run build    # tsc -b + vite build
 npm run lint
 ```
 
-驱动真实应用（Playwright + 本机 Edge）需要先过三道闸门：
+- PDF 侧载资源（cmaps / standard_fonts / wasm）由 `scripts/copy-pdfjs-assets.mjs` 复制。
+  **直接跑 `vite` 而不跑 `npm run dev` 会缺这些资源**，表现是中文 PDF 变方块、老论文整页空白。
+- 环境变量走 `.env.local`（gitignored）：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `ENABLE_THINKING` /
+  `COMMUNITY_API`。其中只有 "未配置时走代理" 这一条路径用到它们；应用运行时的实际配置来自
+  `apiConfigStore`（localStorage），两者不要混淆。
+- `vite.config.ts` 的代理顺序有讲究：`/api/tencent` 与 `/api/llm` 必须写在 `/api/` 之前 ——
+  Vite 按书写顺序匹配前缀，宽泛的 `/api/` 会把它们一起吃掉。
+- 生产构建的 `base` 由 `BASE_URL` 决定（默认生产为 `/app/`）。
+
+### 13.2 部署
+
+`ecosystem.config.cjs` + `start.sh` / `stop.sh` / `restart.sh` / `logs.sh` 用 PM2 托管 `npm run dev`。
+注意 `watch: false`：改代码后需要 `./restart.sh`，不会自动热更。
+
+### 13.3 驱动真实应用做验证
+
+仓库没有测试基础设施，验证一律把应用跑起来。用 Playwright + 本机 Edge 即可，
+但需要先过三道闸门：
 
 1. **配置闸门**：`localStorage['prunus-api-config']` 里 `mode` 不能是 `unconfigured`。
 2. **引导闸门**：`localStorage['prunus-ui-storage']` 里 `tourState.completedAt` 非空，

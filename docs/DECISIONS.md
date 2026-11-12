@@ -1,7 +1,7 @@
 # 决策记录与已知问题 (DECISIONS.md)
 
 > 目的：记录**无法从代码推导出的"决策理由"**与**已知问题**，供跨机器 / 跨会话接续开发。
-> 与 `ARCHITECTURE_0.21.0.md`（架构，含 §17 增量变更）和 `UI_UX_DESIGN_GUIDE.md`（设计规范）互补。
+> 与 `ARCHITECTURE.md`（架构全貌，含数据模型、架构图/流程图/时序图）和 `UI_UX_DESIGN_GUIDE.md`（设计规范）互补。
 > 本文是"为什么"，架构文档是"是什么"，代码是"最终真相"。
 
 ---
@@ -49,7 +49,7 @@
 - **根因**：`MessageNode.tsx` 流式期间用 `ReactMarkdown` 渲染累积的 `displayContent`，每个 chunk 触发 Zustand `set()` → 节点重渲染 → 对全部累积 markdown 重新解析。
 - **计划修复（未落地）**：流式期间用 `<pre>` 纯文本渲染，结束后切回 `ReactMarkdown`。
 
-### 2. 遗留技术债（见 ARCHITECTURE §16，部分已修复）
+### 2. 遗留技术债（见 ARCHITECTURE §12，部分已修复）
 - 未使用组件：`WelcomeGuide` / `ContextualHint` / `useTourStepValidator` / `App.css`。
 - 未使用依赖：`@dnd-kit` 三件套。
 - `chatStore` 兼容门面仍被部分组件（`MessageNode`/`ChatInput`）使用，新旧 store 并存。

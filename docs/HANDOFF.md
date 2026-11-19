@@ -292,7 +292,7 @@ Vite 按对象键的**插入顺序**匹配，`/api/` 在前会吞掉另外两个
 配套：图片走**独立的视觉配置**（`apiConfigStore.vision`），未配置时回退到聊天配置；
 只有真的带了图才切换连接，纯文本请求行为不变。
 
-### 4.9 选中工具条的三条硬约束
+### 4.9 选中工具条的四条硬约束
 
 `components/common/SelectionToolbar.tsx` 同时服务画布节点与链路编辑。改它之前记住：
 
@@ -303,6 +303,11 @@ Vite 按对象键的**插入顺序**匹配，`/api/` 在前会吞掉另外两个
    选区塌陷，格式会作用到空选区。
 3. **`selectionchange` 是全局事件**，必须用 `editorRef.current.contains(...)` 过滤，
    否则在 PDF 文本层里选字也会弹出格式条。
+4. **只在选区定稿后显示，不要在拖选过程中定位**。`selectionchange` 在拖选时每个字符
+   都会触发，在那里 setAnchor 会让工具条从按下鼠标起一路跟着光标飞、挡住视线。
+   现在的生命周期是：`pointerdown` 收起 → `pointerup` / `keyup` 定稿后显示；
+   `selectionchange` 只负责"选区塌陷或跑到编辑器外时收起"，绝不负责定位。
+   双击选词另有 `dblclick` 补一帧（浏览器可能在 pointerup 之后才最终定下选区）。
 
 另外：底部那套 `FormatToolbar` **已删除**（连同 `chat/FormatToolbar.tsx`），
 编辑工具现在只有浮条一个入口。右键菜单里的摘取暂时保留，与浮条并存。

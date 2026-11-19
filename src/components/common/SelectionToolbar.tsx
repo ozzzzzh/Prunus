@@ -2,7 +2,13 @@
  * 选中文字后浮出的工具栏
  *
  * 目的：用户选完字，鼠标就在原地，不该被迫移到屏幕底部的输入框才能加粗。
- * 选中一段文字 → 选区正上方浮出常用格式动作（+ 画布节点上的摘取动作）。
+ * 选中一段文字 → **松开鼠标之后**，选区正上方浮出常用格式动作
+ * （+ 画布节点上的摘取动作）。
+ *
+ * 时机是刻意的：不要在拖选过程中出现。selectionchange 在拖选时每个字符都会触发，
+ * 若在那里定位，工具条会从按下鼠标起一路跟着光标飞，挡视线也干扰判断。
+ * 现在由 pointerdown（收起）/ pointerup、keyup（定稿后出现）决定生命周期，
+ * selectionchange 只负责"选区塌陷或跑到编辑器外时收起"。详见下方 effect。
  *
  * 三条与外部环境有关的约束（改之前先读）：
  * 1. **必须 portal 到 body**：画布节点处在 React Flow 的 transform 容器里，
@@ -73,8 +79,11 @@ export default function SelectionToolbar({
     strikethrough: false,
   });
   const barRef = useRef<HTMLDivElement>(null);
+  /** 与 anchor 同步的镜像：滚动/缩放回调里据此判断"现在到底显不显示" */
+  const anchorRef = useRef<{ x: number; top: number; bottom: number } | null>(null);
 
   const hide = useCallback(() => {
+    anchorRef.current = null;
     setAnchor(null);
     setMenu(null);
   }, []);
@@ -88,55 +97,118 @@ export default function SelectionToolbar({
     });
   }, []);
 
-  const update = useCallback(() => {
+  /**
+   * 计算选区该停在哪，不满足条件返回 null。
+   *
+   * 刻意做成**纯计算**：什么时候显示由事件决定（见下方 effect），
+   * 因为 selectionchange 在拖选过程中会连续触发 —— 在那里更新位置，
+   * 工具条就会跟着鼠标一路飞，这正是要修掉的体验问题。
+   */
+  const computeAnchor = useCallback(() => {
     const editor = editorRef.current;
     const sel = window.getSelection();
 
-    if (!editor || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      hide();
-      return;
-    }
+    if (!editor || !sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
 
     const range = sel.getRangeAt(0);
     // 只关心本编辑器里的选区（PDF 文本层、别的节点都会发 selectionchange）
-    if (!editor.contains(range.commonAncestorContainer)) {
-      hide();
-      return;
-    }
+    if (!editor.contains(range.commonAncestorContainer)) return null;
 
     // 焦点已经离开编辑器（点了别处）就收起。
     // 工具条自己的按钮会 preventDefault，所以点它们不会走到这里。
     const active = document.activeElement;
-    if (active !== editor && !editor.contains(active)) {
-      hide();
-      return;
-    }
+    if (active !== editor && !editor.contains(active)) return null;
 
     // 多行选区用**第一行**的矩形当锚点：用整体 bounding rect 会让工具条飘到两行中间
     const rects = range.getClientRects();
     const rect = rects.length > 0 ? rects[0] : range.getBoundingClientRect();
-    if (!rect || (rect.width === 0 && rect.height === 0)) {
+    if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+
+    return { x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom };
+  }, [editorRef]);
+
+  /** 选区已经定下来：显示（条件不满足则收起） */
+  const show = useCallback(() => {
+    const next = computeAnchor();
+    if (!next) {
       hide();
       return;
     }
-
-    setAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom });
+    anchorRef.current = next;
+    setAnchor(next);
     refreshFormats();
-  }, [editorRef, hide, refreshFormats]);
+  }, [computeAnchor, hide, refreshFormats]);
+
+  /** 只在工具条已经显示时跟随滚动/缩放；不因为滚动把它从无到有弹出来 */
+  const reposition = useCallback(() => {
+    if (!anchorRef.current) return;
+    show();
+  }, [show]);
 
   useEffect(() => {
-    // 挂载时不主动算一次：工具条是在"进入编辑态"之后才挂载的，此时还没有选区；
-    // 真正的选区变化都会触发 selectionchange。顺带避开 set-state-in-effect。
-    document.addEventListener('selectionchange', update);
-    window.addEventListener('resize', update);
-    // capture：编辑器内部滚动时也要重算位置
-    document.addEventListener('scroll', update, true);
-    return () => {
-      document.removeEventListener('selectionchange', update);
-      window.removeEventListener('resize', update);
-      document.removeEventListener('scroll', update, true);
+    /**
+     * 选区变化只做"收起"判断，**绝不在拖选过程中更新位置**。
+     *
+     * 旧实现把定位放在这里，于是拖选时每个字符都会重算一次，工具条从按下鼠标
+     * 那一刻就出现并一路跟着光标跑，挡视线也干扰判断。现在：
+     *   - pointerdown：开始新选区，先收起
+     *   - pointerup / keyup：选区定稿，这时才出现
+     *   - selectionchange：只在选区塌陷/跑到编辑器外时收起
+     */
+    const onSelectionChange = () => {
+      const editor = editorRef.current;
+      const sel = window.getSelection();
+
+      if (!editor || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        hide();
+        return;
+      }
+
+      const range = sel.getRangeAt(0);
+      if (!editor.contains(range.commonAncestorContainer)) {
+        hide();
+        return;
+      }
+
+      const active = document.activeElement;
+      if (active !== editor && !editor.contains(active)) {
+        hide();
+      }
     };
-  }, [update]);
+
+    const onPointerDown = (e: PointerEvent) => {
+      // 工具条自己（含二级色板）的按下不算"开始新选区"，否则按钮会在 click 前被卸掉
+      if (barRef.current?.contains(e.target as Node)) return;
+      hide();
+    };
+
+    const onPointerUp = () => show();
+    const onKeyUp = () => show();
+    // 双击选词时浏览器可能在 pointerup 之后才最终定下选区，补一帧再算一次
+    const onDoubleClick = () => {
+      window.setTimeout(show, 0);
+    };
+
+    document.addEventListener('selectionchange', onSelectionChange);
+    // 必须冒泡阶段：工具条按钮的 onMouseDown preventDefault 之后事件仍会到这里，
+    // 靠上面的 contains 判断把它们排除
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('dblclick', onDoubleClick);
+    window.addEventListener('resize', reposition);
+    // capture：编辑器内部滚动时也要重算位置
+    document.addEventListener('scroll', reposition, true);
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('keyup', onKeyUp);
+      document.removeEventListener('dblclick', onDoubleClick);
+      window.removeEventListener('resize', reposition);
+      document.removeEventListener('scroll', reposition, true);
+    };
+  }, [editorRef, hide, show, reposition]);
 
   // 实测尺寸，用于夹取到视口内并决定放上方还是下方（与 PDF 选区气泡同一套做法）
   useLayoutEffect(() => {

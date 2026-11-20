@@ -14,6 +14,30 @@ import { useUIStore } from '../store/uiStore';
 
 const DEFAULT_TITLE = 'New Prompt';
 
+/**
+ * 把 Prompt 会话里的聊天节点标成"解释"。
+ *
+ * 恢复底部聊天框之后，用户可以在任意节点下追问概念。这些问答默认不进入成稿，
+ * 但仍然可以被勾选成「备注」—— 所以要打上 prompt 标记，让画布用 PromptNode 渲染，
+ * 并在左侧清单里归到「知识笔记」。
+ *
+ * 非 Prompt 会话直接跳过，聊天流程完全不受影响。
+ */
+export function tagPromptChatNode(
+  sessionId: string,
+  nodeId: string,
+  role: 'user' | 'assistant'
+): void {
+  const session = useSessionStore.getState().sessions[sessionId];
+  if (!session?.microApps?.prompt) return;
+
+  useSessionStore.getState().setPromptNodeMeta(sessionId, nodeId, {
+    kind: 'explain',
+    origin: role === 'user' ? 'user' : 'ai',
+    included: false,
+  });
+}
+
 export function createPromptSession(folderId: string | null = null): string {
   const sessionId = useSessionStore.getState().createSession();
 

@@ -4,25 +4,46 @@
  * 这是 Prompt 微应用"穿的衣服"：主应用的 MessageNode 完全不知道它的存在。
  * 只在 `registry.loadNodeTypes` 被打开时才加载并注册到画布上。
  *
- * 三种形态：
- * - 议题根：显示用户输入的目标，没有勾选框；
- * - 未选：虚线、低权重、窄卡，点勾选框才进入主路径；
- * - 已选：正常卡片，出现「细分」或「再想几个」。
+ * 四种形态：
+ * - 议题根：显示目标，没有勾选框；
+ * - 未纳入：虚线、空勾选框，内容照常可读、可展开；
+ * - 已纳入：实心勾选、绿色描边；
+ * - 解释：追问产生的问答，浅色「笔记」样式，默认不纳入。
  *
+ * 核心约定：**勾选 = 纳入成稿，展开不要求先勾选**。
  * 所有状态都在节点 metadata 里（见 types/microApp.ts 的 PromptNodeMeta），
- * 所以勾选、细分、删除天然是可撤销的。
+ * 所以勾选、编辑、细分、删除天然是可撤销的。
  */
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Check, Loader2, Sparkles, Wand2, X } from 'lucide-react';
+import {
+  Check,
+  Loader2,
+  Lock,
+  MessageCircle,
+  Pencil,
+  Plus,
+  Sparkles,
+  StickyNote,
+  Wand2,
+  X,
+} from 'lucide-react';
 import type { PrunusNode } from '../../../types';
-import { getPromptNodeMeta, isPromptRoot } from '../../../types/microApp';
+import {
+  getPromptNodeMeta,
+  isPromptRoot,
+  type PromptNodeKind,
+} from '../../../types/microApp';
 import { useSessionStore } from '../../../store/sessionStore';
+import { useGenerationStore } from '../../../store/generationStore';
 import { useDialogStore } from '../../../store/dialogStore';
+import { useUIStore } from '../../../store/uiStore';
 import { reportNodeSize } from '../../../store/nodeSizeStore';
 import { expandPromptNode } from '../../../utils/promptExpand';
 import { cn } from '../../../utils/cn';
+import SelectionToolbar from '../../common/SelectionToolbar';
+import MarkdownText from '../../markdown/MarkdownText';
 
 interface PromptNodeProps {
   data: {
@@ -33,9 +54,19 @@ interface PromptNodeProps {
   };
 }
 
+const KIND_BADGE: Record<PromptNodeKind, { label: string; className: string; icon: ReactNode }> = {
+  decision: { label: 'AI 建议', className: 'text-gray-400', icon: null },
+  draft: { label: '候选稿', className: 'text-leaf-600 bg-leaf-50', icon: <Sparkles size={9} /> },
+  fact: { label: '事实', className: 'text-sky-600 bg-sky-50', icon: <Lock size={9} /> },
+  explain: { label: '解释', className: 'text-slate-500 bg-slate-100', icon: <MessageCircle size={9} /> },
+  note: { label: '我的补充', className: 'text-amber-600 bg-amber-50', icon: <StickyNote size={9} /> },
+};
+
 function PromptNode({ data }: PromptNodeProps) {
   const { node, promptRoot } = data;
   const cardRef = useRef<HTMLDivElement>(null);
+  const editRef = useRef<HTMLDivElement>(null);
+  const editInitializedRef = useRef(false);
   const [busy, setBusy] = useState(false);
 
   const sessionId = useSessionStore((state) => state.activeSessionId);
@@ -48,28 +79,25 @@ function PromptNode({ data }: PromptNodeProps) {
       : 3
   );
   const setPromptNodeMeta = useSessionStore((state) => state.setPromptNodeMeta);
+  const addPromptChild = useSessionStore((state) => state.addPromptChild);
+  const updateNodeContent = useSessionStore((state) => state.updateNodeContent);
   const deleteNode = useSessionStore((state) => state.deleteNode);
 
+  const editingNodeId = useUIStore((state) => state.editingNodeId);
+  const setEditingNode = useUIStore((state) => state.setEditingNode);
+  const isEditing = editingNodeId === node.id;
+
+  const streamingContent = useGenerationStore((state) =>
+    state.generatingNodeId === node.id ? state.streamingContent : ''
+  );
+
   const meta = getPromptNodeMeta(node) ?? {};
-  const selected = meta.selected === true;
+  const included = meta.included === true;
+  const kind: PromptNodeKind = meta.kind ?? 'decision';
+  const origin = meta.origin ?? 'ai';
   const isRoot = promptRoot || isPromptRoot(node);
-
-  /** 祖先链上有没有被取消勾选的节点 —— 有的话整支都失效，视觉上跟着变淡 */
-  const branchActive = useMemo(() => {
-    if (!nodes) return true;
-    let cursor = node.parentId;
-    while (cursor) {
-      const ancestor = nodes[cursor];
-      if (!ancestor) break;
-      if (isPromptRoot(ancestor)) return true;
-      const ancestorMeta = getPromptNodeMeta(ancestor);
-      if (ancestorMeta && !ancestorMeta.selected) return false;
-      cursor = ancestor.parentId;
-    }
-    return true;
-  }, [nodes, node.parentId]);
-
-  const dimmed = !isRoot && (!selected || !branchActive);
+  const isExplain = kind === 'explain';
+  const isFact = kind === 'fact';
 
   // 尺寸上报：布局靠它拿到真实高度。rAF 合并发生在 reportNodeSize 内部。
   useEffect(() => {
@@ -83,11 +111,57 @@ function PromptNode({ data }: PromptNodeProps) {
     return () => observer.disconnect();
   }, [node.id]);
 
+  /**
+   * 进入编辑态时把内容灌进 contentEditable 并把光标放到末尾。
+   *
+   * 只初始化一次（editInitializedRef）：node.content 在编辑过程中可能因为
+   * 其他 store 更新而变化，反复写 innerHTML 会打断输入。
+   */
+  useEffect(() => {
+    if (!isEditing) {
+      editInitializedRef.current = false;
+      return;
+    }
+    const el = editRef.current;
+    if (!el || editInitializedRef.current) return;
+
+    el.innerHTML = node.content;
+    editInitializedRef.current = true;
+    el.focus();
+
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [isEditing, node.id, node.content]);
+
+  const finishEditing = () => {
+    const el = editRef.current;
+    if (el) updateNodeContent(node.id, el.innerHTML);
+    setEditingNode(null);
+  };
+
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     if (!sessionId) return;
-    setPromptNodeMeta(sessionId, node.id, { selected: !selected });
+    setPromptNodeMeta(sessionId, node.id, { included: !included });
+  };
+
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setEditingNode(node.id);
+  };
+
+  const handleAddChild = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!sessionId) return;
+    const id = addPromptChild(sessionId, node.id, 'note');
+    if (id) setEditingNode(id);
   };
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -124,29 +198,48 @@ function PromptNode({ data }: PromptNodeProps) {
     }
   };
 
-  /**
-   * 议题根也可能需要补齐：它同样是"一批选项的父节点"。
-   * 用户删掉顶层方向后，缺口应该补在根上，而不是无路可走。
-   */
-  const actionable = isRoot || selected;
-  const canExpand = actionable && !meta.expanded && !meta.done;
+  /** 只数 AI 提议的决策/候选稿：手动笔记与追问解释不占发散名额 */
+  const proposalChildCount = node.childrenIds.reduce((count, childId) => {
+    const child = nodes?.[childId];
+    const childMeta = child ? getPromptNodeMeta(child) : null;
+    return childMeta && (childMeta.kind === 'decision' || childMeta.kind === 'draft')
+      ? count + 1
+      : count;
+  }, 0);
+
+  const canExpand = !isExplain && !isFact && !meta.expanded && !meta.done;
   const canReplenish =
-    actionable && meta.expanded === true && !meta.done && node.childrenIds.length < optionCount;
+    !isExplain &&
+    !isFact &&
+    meta.expanded === true &&
+    !meta.done &&
+    proposalChildCount < optionCount;
+
+  const badge = isRoot
+    ? null
+    : kind === 'decision'
+      ? origin === 'user'
+        ? { label: '我的补充', className: 'text-amber-600 bg-amber-50', icon: <StickyNote size={9} /> }
+        : KIND_BADGE.decision
+      : KIND_BADGE[kind];
+
+  const shownContent = streamingContent || node.content;
 
   return (
     <div
       ref={cardRef}
-      data-prompt-node={isRoot ? 'root' : selected ? 'selected' : 'unselected'}
+      data-prompt-node={isRoot ? 'root' : included ? 'included' : 'unincluded'}
+      data-prompt-kind={isRoot ? 'root' : kind}
       className={cn(
         'group/node relative w-full rounded-xl border px-3 py-2.5 transition-colors duration-150',
+        isEditing && 'ring-2 ring-leaf-200',
         isRoot
           ? 'bg-white border-leaf-200 shadow-sm'
-          : selected
-            ? 'bg-white border-leaf-300 shadow-sm'
-            : 'bg-white border-dashed border-gray-300',
-        // 低权重不等于看不清：虚线 + 浅字已经足够表达"未选"，
-        // 再叠一层强透明度会让整棵树在缩小时变成一片灰雾
-        dimmed && 'opacity-75'
+          : isExplain
+            ? cn('border-slate-200', included ? 'bg-slate-50 border-leaf-300' : 'bg-slate-50/70')
+            : included
+              ? 'bg-white border-leaf-300 shadow-sm'
+              : 'bg-white border-dashed border-gray-300'
       )}
     >
       <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
@@ -157,10 +250,10 @@ function PromptNode({ data }: PromptNodeProps) {
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={handleToggle}
-            title={selected ? '取消勾选' : '勾选这一项'}
+            title={included ? '取消纳入成稿' : '纳入成稿'}
             className={cn(
               'mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center transition-colors',
-              selected
+              included
                 ? 'bg-leaf-600 border-leaf-600 text-white'
                 : 'bg-white border-gray-300 text-transparent hover:border-leaf-400'
             )}
@@ -170,39 +263,102 @@ function PromptNode({ data }: PromptNodeProps) {
         )}
 
         <div className="min-w-0 flex-1">
-          {isRoot && (
-            <span className="inline-block mb-1 text-[10px] font-medium tracking-wide text-leaf-600">
-              PROMPT 议题
-            </span>
-          )}
-          <div
-            className={cn(
-              'text-sm leading-snug break-words',
-              isRoot ? 'font-semibold text-gray-800' : dimmed ? 'text-gray-500' : 'font-medium text-gray-800'
+          <div className="flex items-center gap-1.5">
+            {isRoot ? (
+              <span className="text-[10px] font-medium tracking-wide text-leaf-600">PROMPT 议题</span>
+            ) : (
+              badge && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium',
+                    badge.className
+                  )}
+                >
+                  {badge.icon}
+                  {badge.label}
+                </span>
+              )
             )}
-          >
-            {node.content.trim() || '（未命名）'}
           </div>
-          {!isRoot && meta.why && (
-            <p className="mt-1 text-[11px] leading-snug text-gray-400 break-words">{meta.why}</p>
+
+          {isEditing ? (
+            <div
+              /*
+               * 必须和下面的展示态用不同的 key：两者都是 <div>，React 会复用同一个
+               * DOM 节点。而编辑器里的文字是浏览器直接改的、React 并不知道 ——
+               * 退出编辑时它只会追加自己的子节点，不会清掉手写进去的文本，
+               * 于是卡片上出现一份原文 + 一份 Markdown 渲染，看起来像重复了。
+               */
+              key="prompt-editor"
+              ref={editRef}
+              contentEditable
+              data-editor-dirty="false"
+              onInput={(e) => e.currentTarget.setAttribute('data-editor-dirty', 'true')}
+              onBlur={finishEditing}
+              onKeyDown={(e) => {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                  e.stopPropagation();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  editRef.current?.blur();
+                }
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              className="mt-0.5 outline-none min-h-[40px] text-sm leading-snug text-gray-800 prose prose-sm max-w-none"
+              suppressContentEditableWarning
+            />
+          ) : (
+            <div
+              key="prompt-view"
+              className={cn(
+                'mt-0.5 text-sm leading-snug break-words',
+                isRoot ? 'font-semibold text-gray-800' : 'text-gray-800'
+              )}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setEditingNode(node.id);
+              }}
+              title="双击编辑"
+            >
+              {shownContent.trim() ? (
+                <div className="prose prose-sm max-w-none break-words">
+                  <MarkdownText>{shownContent}</MarkdownText>
+                </div>
+              ) : (
+                <span className="text-gray-300">（未命名，双击编辑）</span>
+              )}
+            </div>
           )}
+
+          {!isRoot && meta.why && <p className="mt-1 text-[11px] leading-snug text-gray-400 break-words">{meta.why}</p>}
         </div>
 
-        {/* 删除：低权重节点也要留出口；悬停才出现，避免满屏叉号 */}
-        {!isRoot && (
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={handleDelete}
-            title="删除这一项"
-            className="shrink-0 p-0.5 rounded text-gray-300 opacity-0 group-hover/node:opacity-100 hover:text-red-500 hover:bg-gray-100 transition-opacity"
-          >
-            <X size={12} />
-          </button>
+        {!isRoot && !isFact && (
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/node:opacity-100">
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={handleEdit}
+              title="编辑"
+              className="p-0.5 rounded text-gray-300 hover:text-leaf-600 hover:bg-gray-100"
+            >
+              <Pencil size={11} />
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={handleDelete}
+              title="删除这一项"
+              className="p-0.5 rounded text-gray-300 hover:text-red-500 hover:bg-gray-100"
+            >
+              <X size={12} />
+            </button>
+          </div>
         )}
       </div>
 
-      {actionable && (
+      {!isFact && (
         <div className="mt-2 flex items-center gap-1.5">
           {busy ? (
             <span className="flex items-center gap-1 text-[11px] text-gray-400">
@@ -227,13 +383,27 @@ function PromptNode({ data }: PromptNodeProps) {
             >
               <Wand2 size={13} />
             </button>
+          ) : isExplain ? (
+            <span className="text-[11px] text-slate-400">解释默认不进入成稿</span>
           ) : meta.done ? (
             <span className="text-[11px] text-gray-300">已足够具体</span>
-          ) : (
-            <span className="text-[11px] text-gray-300">已细分 {node.childrenIds.length} 项</span>
-          )}
+          ) : meta.expanded ? (
+            <span className="text-[11px] text-gray-300">已细分 {proposalChildCount} 项</span>
+          ) : null}
+
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={handleAddChild}
+            title="手动添加一个子节点"
+            className="p-1 rounded-md text-gray-400 hover:text-leaf-600 hover:bg-gray-100 transition-colors"
+          >
+            <Plus size={12} />
+          </button>
         </div>
       )}
+
+      {isEditing && <SelectionToolbar editorRef={editRef} />}
 
       <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
     </div>

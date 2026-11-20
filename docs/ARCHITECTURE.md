@@ -787,20 +787,62 @@ PDF 文本层是普通 `<div>`，拖选文字不会让任何元素获得焦点�
 - 画布外观由 `PromptNode` 负责，经 `loadNodeTypes` 按需加载（见 §8.2）。
   `MessageNode` 一行都不用改 —— 这是"到不同的地方穿不同的衣服"。
 
+#### 两个状态必须分开
+
+| 状态 | 含义 | 默认 |
+|---|---|---|
+| **展开（expanded）** | 这一支往下想过（细分 / 追问 / 手动加子节点） | — |
+| **纳入（included）** | 这一条要进入最终成稿 | AI 提议：否；用户手写：是；解释：否 |
+
+**展开不要求先勾选，勾选也不要求先展开。** 这是"先探索、后选择"的前提。
+勾选只决定它去不去成稿。
+
+#### 节点类型与来源
+
+```ts
+kind: 'decision' | 'draft' | 'fact' | 'explain' | 'note'
+origin: 'ai' | 'user'
+```
+
+- `decision`：方向/偏好选择
+- `draft`：可直接粘贴的候选稿
+- `fact`：用户提供的事实
+- `explain`：追问产生的问答（底部聊天框自动打标）
+- `note`：用户手动补充
+
 #### 数据与动作
 
 ```ts
-session.microApps.prompt = { optionCount: number }   // 2–6，默认 3
-node.metadata.promptNode = { selected?, why?, batchId?, expanded?, done? }
-node.metadata.promptRoot = true                       // 议题根
+session.microApps.prompt = {
+  optionCount: number,          // 2–6，默认 3
+  artifact?, artifactAt?,       // 最近一次成稿
+  artifactFingerprint?,         // 勾选指纹，用于判断"已过期"
+}
+node.metadata.promptNode = { included?, kind?, origin?, why?, batchId?, expanded?, done? }
+node.metadata.promptRoot = true
 ```
 
 | 动作 | 说明 |
 |---|---|
-| `addPromptProposals({ sessionId, parentId, items, batchId })` | 批量创建**未勾选**节点；一步撤销；不移动 `currentNodeId` |
-| `setPromptNodeMeta(sessionId, nodeId, patch)` | 勾选 / 已展开 / 已足够具体；可撤销 |
-| `deleteNode` | 复用现有删除；未选项也走它 |
-| `expandPromptNode(sessionId, nodeId)` | 唯一需要模型的环节：发散 / 补齐（`utils/promptExpand.ts`） |
+| `addPromptProposals({ sessionId, parentId, items, batchId })` | 批量创建**未纳入**节点（`kind` 由 LLM 返回）；一步撤销；不移动 `currentNodeId` |
+| `setPromptNodeMeta(sessionId, nodeId, patch)` | 纳入 / 展开 / 类型 / 已足够具体；可撤销 |
+| `addPromptChild(sessionId, parentId, kind='note')` | 手动分叉：默认纳入、origin=user，返回 id 供 UI 进入编辑态 |
+| `deleteNode` | 复用现有删除 |
+| `expandPromptNode(sessionId, nodeId)` | 发散 / 补齐（`utils/promptExpand.ts`） |
+| `synthesizePrompt(sessionId)` | 成稿（`utils/promptSynthesis.ts`） |
+
+#### 编辑、手动分叉与追问
+
+- **编辑**：双击节点进入 contentEditable，复用 `SelectionToolbar`；失焦保存。
+  内容可能是 HTML，左侧清单与成稿一律走 `htmlToPlainText`。
+  编辑态与展示态必须用不同的 React key（同为 `<div>` 会被复用，浏览器手写进去的
+  文本不会在退出编辑时被清掉，表现为"内容重复一遍"）。
+- **手动分叉**：节点上的 `＋` 创建空节点并进入编辑态；`kind='note'`、默认纳入。
+  它不设置 `expanded`，所以之后再点「细分」仍然会得到 AI 提议。
+- **追问**：底部聊天框在 Prompt 会话里恢复显示。`ChatInput` 新建的 user/assistant
+  节点会被 `tagPromptChatNode` 标成 `kind:'explain'`、`included:false`，
+  所以它们天然不进成稿；勾选后作为「知识笔记」进入成稿的备注。
+  解释卡片支持继续追问、编辑、手动补子节点。
 
 #### 一次发散的时序
 
@@ -813,44 +855,55 @@ sequenceDiagram
   participant API as 聊天模型
   participant S as sessionStore
 
-  U->>N: 勾选一个节点 → 点「细分」
+  U->>N: 任意节点点「细分」（不要求先勾选）
   N->>E: expandPromptNode(sessionId, nodeId)
   E->>E: 组装上下文：议题 + 路径 + 已想过的标题 + 已有子项
-  E->>API: /chat/completions（JSON 输出，temperature 0.7）
-  API-->>E: { done, items: [{title, why}] }
+  E->>API: /chat/completions（JSON，temperature 0.7）
+  API-->>E: { done, items: [{title, why, kind}] }
   alt done 或空数组
     E->>S: setPromptNodeMeta(expanded, done)
   else 有结果
-    E->>S: addPromptProposals(整批，默认未勾选)
+    E->>S: addPromptProposals(整批，默认未纳入)
   end
   S-->>N: 画布出现新节点
-  S-->>Panel: 左侧提示词重算
+  S-->>Panel: 左侧清单重算
 ```
 
-#### 左侧的层级型提示词
+发散规则的核心：**优先给成品**（文案/结构/配色/技术片段/prompt），
+不给"要吸引人"这类空话；通用最佳实践不问，留给成稿的默认约束。
 
-`utils/promptOutline.ts` 是纯函数：只沿**已勾选**的节点往下走，输出
+#### 左侧面板：清单 + 成稿
 
-- `# 议题`
-- `## 已确定的决策`（嵌套列表，树长什么样就写什么样）
-- `## 还可以继续细分`（勾了但还没下文的）
-- `## 已排除`（考虑过但没勾的）
+清单是纯函数 `utils/promptOutline.ts` 的投影，按 `included` 收集：
 
-所以它是真正实时的 —— 每次勾选/删除都不需要网络，也不会因为流式回填而跳动。
-没有"AI 润色"这一层：面板就是树的投影，复制即用。
+- `## 事实（你给的）`
+- `## 已纳入`（决策/候选稿/笔记，按树层级）
+- `## 知识笔记（已纳入）`（解释）
+- `## 待具体化`（纳入但没有具体下文的决策）
+- 底部显示纳入/未纳入数量
+
+点「生成成稿」后，面板**直接切到成稿视图**（不是弹窗、不是第二个标签页）：
+
+- LLM 按 PRD 的章节纪律组织，按领域与读者决定详略：
+  网页/代码给完整章节；图片/视频压缩成"用途/主体/风格/构图/约束/负面/输出格式"。
+- 只使用纳入内容；事实原样保留；缺失事实写 `[待确认: …]`。
+- 可以推断标准件（CTA、基础架构、验收标准、非目标、输出格式、负面词、镜头节奏），
+  推断项在正文里标 `（推断）`。
+- 结尾固定有 `## 假设与待确认`。
+- 成稿保存在 `microApps.prompt.artifact`；清单变化后（指纹不一致）显示"清单已更新"。
 
 #### 补齐
 
-发散默认给 `optionCount` 个。用户删掉其中几个后，父节点上出现一个
+发散默认给 `optionCount` 个。用户删掉其中几个后，父节点上出现
 **创意图标（Wand2）**；点击才补，补的数量 = 缺口，且把同层已有标题发给模型去重。
-不自动补，也不因为"数量不足"打扰用户。议题根同样适用（它也是一批选项的父节点）。
+只数 AI 提议的 decision/draft，手动笔记与追问解释不占名额。
 
 #### 画布与会话
 
-- Prompt 模式下画布**每次节点数变化都 fitView**（`maxZoom: 1`）：如果只靠"焦点跟随"，
-  面板占掉左侧 560px 后最左的兄弟分支会躲到面板底下，点不到也看不见。
-- Prompt 会话即使关掉面板也不显示聊天输入框；切回普通会话时自动收起 Prompt 面板，
-  把画布和输入框还回去（判断依据都是 `session.microApps.prompt`）。
+- Prompt 模式下画布**每次节点数变化都 fitView**（`maxZoom: 1`），否则面板占掉左侧后
+  最左的兄弟分支会躲到面板底下。
+- **底部聊天框保留**，承担"追问概念"的职责（见上）。
+- 切到普通会话时自动收起 Prompt 面板，把画布和输入框还回去。
 
 ---
 
@@ -1084,9 +1137,10 @@ src/
 │   ├── nodeSearch.ts           本地关键字检索
 │   ├── jevClient.ts            JEV 语义检索（需社区后端）
 │   ├── sessionTransfer.ts      单会话导出 / 导入
-│   ├── promptSession.ts        新建 Prompt 会话（三个入口共用）
-│   ├── promptExpand.ts         发散 / 补齐的 LLM 调用
-│   ├── promptOutline.ts        决策树 → 层级型提示词（纯函数）
+│   ├── promptSession.ts        新建 Prompt 会话 + 聊天节点打 explain 标记
+│   ├── promptExpand.ts         发散 / 补齐的 LLM 调用（优先给候选稿）
+│   ├── promptSynthesis.ts      成稿：结构化 Prompt + 推断 + 假设
+│   ├── promptOutline.ts        决策树 → 实时清单（纯函数）
 │   ├── docHash.ts              内容哈希（SHA-256 / FNV-1a 降级）
 │   ├── pdfjs.ts                pdf.js 统一引导（worker + 侧载资源）
 │   ├── pdfPaging.ts            连续滚动的分页几何

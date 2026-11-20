@@ -203,7 +203,7 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 | **引导** | **15 步**动作校验式交互式引导（靠订阅 store 检测真实操作来推进）、欢迎页、情境提示、帮助面板 | `components/onboarding/` |
 | **PDF 微应用** | 打开 PDF、选原文建节点（可挂到当前节点或根节点）、**多色记号笔（只标注不建节点）**、**涂改液式翻译（白块盖住原文显示中文译文）**、按住 Ctrl 点击"已建节点"的记号跳回节点、缩放（Ctrl/Cmd+滚轮）、页码记忆、跨页跳转、扫描件提示 | `components/microapps/pdf/` |
 | **截图问答** | PDF 顶栏相机按钮 → 拖框选区 → 缩略图进入输入框 → 发送时挂到该条消息的节点 → 走**视觉模型**就图对话。图片存独立 IndexedDB 表，节点只存引用 + 小缩略图 | `PdfPanel` / `ChatInput` / `imageStore` |
-| **Prompt 工作台** | 独立 Prompt 会话：输入议题 → LLM 每次发散 2–6 个方向（默认 3）→ 用户勾选（**默认不选**）→ 逐层细分 → 左侧面板实时渲染层级型提示词，可复制。未选项保留为低权重虚线卡，可删除；删除后父节点出现**创意图标（Wand2）**按缺口补齐。**没有产物类型选择**，coding / 剧本走同一套 | `components/microapps/prompt/` + `utils/prompt*` |
+| **Prompt 工作台** | 独立 Prompt 会话：输入议题 → LLM 每次发散 2–6 项（默认 3，优先给**可粘贴的候选稿**）→ 用户勾选「纳入成稿」（默认不选，但**展开不要求先勾选**）→ 逐层细分 / 编辑 / 手动加子节点 / 用底部聊天框**追问概念**。左侧实时清单按 事实 / 已纳入 / 知识笔记 / 待具体化 分组；点「生成成稿」直接切到成稿视图：按 PRD 章节纪律组织，按领域与读者决定详略，推断项标 `（推断）`，末尾 `## 假设与待确认`，清单变化后提示过期。**没有产物类型选择**，网页/图片/视频共用一套槽位 | `components/microapps/prompt/` + `utils/prompt*` |
 | **设置** | 深度思考开关；CDK 模式显示剩余额度，BYOK 模式编辑协议/模型/Base URL/Key | `SettingsModal` |
 
 **交互式引导的 15 步**（`types/tour.ts`）：`welcome-filemanager` → `open-session` → `welcome-canvas` →
@@ -395,8 +395,16 @@ Prompt 的节点（勾选框、细分按钮、虚线未选态）是**独立组�
 3. **节点类型到位前先用 `message` 渲染**：否则 React Flow 会报找不到类型，渲染成默认节点。
 4. **Prompt 的发散请求必须显式传 `sessionId`**：LLM 调用是异步的，期间用户可能切会话；
    `addPromptProposals` / `setPromptNodeMeta` 都不读 `activeSessionId`。
-5. Prompt 会话即使面板关掉，也**不显示聊天输入框**（以 `session.microApps.prompt` 判断，
-   不是以 `activeMicroApp` 判断）；切换回 Prompt 会话时会自动打开面板。
+5. **勾选 = 纳入成稿，展开与勾选解耦**：任何节点都能细分/追问/编辑，勾选只影响成稿。
+   AI 提议默认不纳入，手动节点默认纳入，解释默认不纳入。
+6. **底部聊天框在 Prompt 会话里保留**，承担"追问概念"。
+   `ChatInput` 新建的问答节点由 `tagPromptChatNode` 标成 `kind:'explain'`、`included:false`，
+   所以天然不进成稿；勾选后进入「知识笔记」。不要改回"Prompt 会话隐藏 ChatInput"。
+7. **编辑态与展示态必须用不同的 React key**：两者都是 `<div>`，React 会复用 DOM 节点，
+   浏览器手写进 contentEditable 的文本不会在退出编辑时被清掉，表现为内容重复一遍。
+8. **成稿只读 `included`**，事实原样保留，缺失事实写 `[待确认]`；推断项必须标 `（推断）`
+   并以 `## 假设与待确认` 收尾。清单指纹用于判断成稿是否过期。
+9. **所有展示/成稿内容走 `htmlToPlainText`**：编辑后节点内容是 HTML，直接拼进提示词会带标签。
 
 ---
 

@@ -39,10 +39,6 @@ function App() {
 
   const folderItems = useFolderStore(state => state.items);
   const activeMicroApp = useUIStore(state => state.activeMicroApp);
-  /** Prompt 会话即使面板被关掉，也仍然是 Prompt 会话 —— 聊天输入框不该出现 */
-  const isPromptSession = Boolean(
-    activeSessionId ? sessions[activeSessionId]?.microApps?.prompt : false
-  );
   const microAppWidth = useUIStore(state => state.microAppWidth);
   const microAppResizing = useUIStore(state => state.isResizingMicroApp);
   const mode = useAPIConfigStore(state => state.config.mode);
@@ -302,10 +298,12 @@ function App() {
             {expandedNodeId ? <ExpandedView /> : <ChatCanvas />}
           </ReactFlowProvider>
         </div>
-        {/* Prompt 会话的输入由左侧面板负责；底部的聊天输入框在这里没有意义，
-            留着只会让人以为可以直接对话。用会话本身的标记判断，
-            面板被关掉时也不会把聊天输入框放出来。 */}
-        {activeMicroApp !== 'prompt' && !isPromptSession && <ChatInput />}
+        {/*
+          Prompt 会话也保留底部聊天框：它现在承担"追问概念"的职责。
+          追问产生的问答节点会被标成 explain（见 ChatInput 的 tagPromptChatNode），
+          默认不进入成稿，只在左侧归到「知识笔记」。
+        */}
+        <ChatInput />
       </main>
 
       <SettingsModal />

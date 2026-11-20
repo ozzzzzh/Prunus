@@ -15,6 +15,7 @@ import type {
   MicroAppId,
   PdfMicroAppState,
   PromptNodeMeta,
+  PromptNodeKind,
 } from '../types';
 import { ATTACHMENT_KEY, IMAGE_REF_KEY, PROMPT_NODE_KEY, getPromptNodeMeta } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
@@ -70,11 +71,20 @@ interface SessionState {
     /** 显式传会话 id：LLM 请求是异步的，期间用户可能切走，不能依赖 activeSessionId */
     sessionId: string;
     parentId: string;
-    items: { title: string; why: string }[];
+    items: { title: string; why: string; kind?: 'decision' | 'draft' }[];
     batchId: string;
   }) => string[];
-  /** 更新 Prompt 节点标记（勾选 / 已展开 / 已足够具体） */
+  /** 更新 Prompt 节点标记（纳入 / 展开 / 类型 / 已足够具体） */
   setPromptNodeMeta: (sessionId: string, nodeId: string, patch: Partial<PromptNodeMeta>) => void;
+  /**
+   * 手动加一个子节点（自由分叉）。
+   * 默认 kind='note'、included=true、origin='user'，返回新节点 id 供 UI 进入编辑态。
+   */
+  addPromptChild: (
+    sessionId: string,
+    parentId: string,
+    kind?: PromptNodeKind
+  ) => string | null;
 
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
@@ -506,7 +516,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         node.width = PROMPT_NODE_WIDTH;
         node.metadata = {
           [PROMPT_NODE_KEY]: {
-            selected: false,
+            included: false,
+            kind: item.kind ?? 'decision',
+            origin: 'ai',
             why: item.why,
             batchId,
           } satisfies PromptNodeMeta,
@@ -574,6 +586,60 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         },
       };
     });
+  },
+
+  addPromptChild: (sessionId, parentId, kind = 'note') => {
+    const session = get().sessions[sessionId];
+    const parent = session?.nodes[parentId];
+    if (!session || !parent) return null;
+
+    useHistoryStore.getState().push(sessionId, session);
+
+    const id = generateId();
+
+    set((state) => {
+      const currentSession = state.sessions[sessionId];
+      const currentParent = currentSession?.nodes[parentId];
+      if (!currentSession || !currentParent) return state;
+
+      const node = createAIChatNode({
+        id,
+        parentId,
+        role: 'user',
+        content: '',
+      });
+      node.width = PROMPT_NODE_WIDTH;
+      node.metadata = {
+        [PROMPT_NODE_KEY]: {
+          included: true,
+          kind,
+          origin: 'user',
+        } satisfies PromptNodeMeta,
+      };
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [id]: node,
+              [parentId]: {
+                ...currentParent,
+                childrenIds: [...currentParent.childrenIds, id],
+                marker: currentParent.marker === '🍃' ? '🪵' : currentParent.marker,
+                updatedAt: Date.now(),
+              },
+            },
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+
+    return id;
   },
 
   addBranchedMessages: (role, contents, targetParentId) => {

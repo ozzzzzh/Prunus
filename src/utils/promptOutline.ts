@@ -1,53 +1,72 @@
 /**
- * Prompt 决策树 → 层级型提示词
+ * Prompt 决策树 → 左侧的实时清单
  *
- * 左侧面板要"每增加一次决策就更新一次"，所以这里必须是**纯函数**：
- * 不调模型、不做异步，输入节点表，输出一段 Markdown。每次勾选/删除后
- * 面板直接重算即可，零延迟、零成本。
+ * 纯函数：不调模型、不做异步。每次勾选/编辑/删除后面板直接重算，零延迟。
  *
- * 规则很短：
- * - 只有**祖先链上全部被勾选**的节点才算数（取消父节点 = 整支失效）；
- * - 已勾选的节点按层级展开；
- * - 已勾选但没有子节点的，单列成"还可以继续细分"，提醒用户哪里还能往下想；
- * - 没勾选的同层项单列成"已排除"，保留"考虑过但没采用"的记录。
+ * 两条与旧版不同的规则：
+ * 1. **只看 included**（是否纳入成稿），不再看 `selected`（旧字段在读取层做了回退）；
+ * 2. **父节点未纳入不连坐子孙**。用户可能只勾了一个子项，它仍然要出现在清单里，
+ *    只是前面带上父级的路径作为上下文。
+ *
+ * 节点内容可能是编辑过的 HTML，展示与统计前一律走 htmlToPlainText。
  */
 
 import type { PrunusNode } from '../types';
-import { getPromptNodeMeta } from '../types/microApp';
+import { getPromptNodeMeta, type PromptNodeKind } from '../types/microApp';
+import { htmlToPlainText } from './richtext';
 
 export interface OutlineItem {
-  title: string;
+  /** 单行展示用（多行草稿压成一行） */
+  label: string;
+  /** 原始摊平文本，成稿时使用 */
+  content: string;
+  kind: PromptNodeKind;
   children: OutlineItem[];
+  /** 父节点本身没有纳入，这一项只是因为它被纳入才带上的上下文 */
+  contextOnly?: boolean;
 }
 
 export interface PromptOutline {
   /** 议题（根节点正文） */
   title: string;
-  /** 已确定的决策，按树的层级嵌套 */
+  /** 用户提供的事实 */
+  facts: OutlineItem[];
+  /** 已纳入的决策 / 候选稿 / 笔记（按树层级） */
   decisions: OutlineItem[];
-  /** 已勾选但还没有下文的项 */
+  /** 已纳入的解释（追问产生的知识笔记） */
+  notes: OutlineItem[];
+  /** 已纳入、但还没有具体下文的决策 */
   open: string[];
-  /** 考虑过但没有勾选的项（只收有效父节点下的直接子项） */
-  excluded: string[];
-  /** 已有效勾选的节点数（用于面板页脚） */
-  selectedCount: number;
-  /**
-   * 已选节点的 id 序列。
-   *
-   * 预留给"AI 润色结果是否过期"这类判断；当前的层级型实时提示词用不到，
-   * 但把它做成纯函数返回能让后续扩展不必再改签名。
-   */
+  includedCount: number;
+  excludedCount: number;
+  /** 勾选指纹：用于判断成稿是否过期 */
   fingerprint: string;
 }
 
 const EMPTY: PromptOutline = {
   title: '',
+  facts: [],
   decisions: [],
+  notes: [],
   open: [],
-  excluded: [],
-  selectedCount: 0,
+  includedCount: 0,
+  excludedCount: 0,
   fingerprint: '',
 };
+
+/** 单行化：多行内容在清单里压成一行，避免破坏嵌套列表 */
+function toLabel(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** 轻量哈希：只要"内容变了指纹就变"，不需要抗碰撞 */
+function hash(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(36);
+}
 
 export function buildPromptOutline(
   nodes: Record<string, PrunusNode>,
@@ -56,17 +75,14 @@ export function buildPromptOutline(
   if (!rootNodeId || !nodes[rootNodeId]) return EMPTY;
 
   const root = nodes[rootNodeId];
+  const facts: OutlineItem[] = [];
   const decisions: OutlineItem[] = [];
+  const notes: OutlineItem[] = [];
   const open: string[] = [];
-  const excluded: string[] = [];
-  const selectedIds: string[] = [];
+  let includedCount = 0;
+  let excludedCount = 0;
+  const includedParts: string[] = [];
 
-  const labelOf = (node: PrunusNode) => node.content.trim() || '（未命名）';
-
-  /**
-   * 只沿着"已勾选"的节点往下走 —— 一旦某层没勾，整条支都不算数，
-   * 这也是"取消父节点会让整支失效"的实现方式。
-   */
   const walk = (parentId: string): OutlineItem[] => {
     const parent = nodes[parentId];
     if (!parent) return [];
@@ -80,17 +96,52 @@ export function buildPromptOutline(
       const meta = getPromptNodeMeta(child);
       if (!meta) continue;
 
-      if (!meta.selected) {
-        // 考虑过但没有勾选：保留下来，让用户看得见"当时排除了什么"
-        excluded.push(labelOf(child));
+      const content = htmlToPlainText(child.content).trim();
+      const label = toLabel(content) || '（未命名）';
+      const kind = meta.kind ?? 'decision';
+
+      if (kind === 'explain') {
+        if (meta.included) {
+          includedCount += 1;
+          includedParts.push(`${child.id}:${hash(content)}`);
+          notes.push({ label, content, kind, children: [] });
+        } else {
+          excludedCount += 1;
+        }
+        // 追问链继续往下收
+        notes.push(...walk(childId));
         continue;
       }
 
-      selectedIds.push(child.id);
-      const children = walk(childId);
-      if (children.length === 0) open.push(labelOf(child));
+      if (kind === 'fact') {
+        if (meta.included) {
+          includedCount += 1;
+          includedParts.push(`${child.id}:${hash(content)}`);
+          facts.push({ label, content, kind, children: [] });
+        } else {
+          excludedCount += 1;
+        }
+        continue;
+      }
 
-      items.push({ title: labelOf(child), children });
+      if (meta.included) {
+        includedCount += 1;
+        includedParts.push(`${child.id}:${hash(content)}`);
+        const children = walk(childId);
+        if (children.length === 0 && kind === 'decision') open.push(label);
+        items.push({ label, content, kind, children });
+      } else {
+        excludedCount += 1;
+        // 父节点没勾，但子孙勾了：把子孙带上父级路径放进同一层，避免出现"空壳父节点"
+        const children = walk(childId);
+        for (const childItem of children) {
+          items.push({
+            ...childItem,
+            label: `${label} › ${childItem.label}`,
+            contextOnly: true,
+          });
+        }
+      }
     }
 
     return items;
@@ -99,32 +150,41 @@ export function buildPromptOutline(
   decisions.push(...walk(root.id));
 
   return {
-    // 标题**不做**「未命名」兜底：面板靠它判断"用户还没输入议题"，
-    // 兜底成非空字符串会让输入框永远不出现
-    title: root.content.trim(),
+    // 标题不做「未命名」兜底：面板靠它判断"用户还没输入议题"
+    title: htmlToPlainText(root.content).trim(),
+    facts,
     decisions,
+    notes,
     open,
-    excluded,
-    selectedCount: selectedIds.length,
-    fingerprint: selectedIds.join('>'),
+    includedCount,
+    excludedCount,
+    fingerprint: hash(includedParts.join('|')),
   };
 }
 
-/** 渲染成面板里显示的层级型提示词 */
+/** 渲染成面板里的实时清单 */
 export function outlineToMarkdown(outline: PromptOutline): string {
   const lines: string[] = [];
 
   lines.push(`# ${outline.title || '未命名议题'}`);
+
+  if (outline.facts.length > 0) {
+    lines.push('');
+    lines.push('## 事实（你给的）');
+    lines.push('');
+    for (const item of outline.facts) lines.push(`- ${item.label}`);
+  }
+
   lines.push('');
-  lines.push('## 已确定的决策');
+  lines.push('## 已纳入');
 
   if (outline.decisions.length === 0) {
     lines.push('');
-    lines.push('_还没有勾选任何方向。在右侧画布上勾选你认为需要确定的分支。_');
+    lines.push('_还没有纳入任何内容。在右侧画布上勾选要进入成稿的节点。_');
   } else {
     const render = (items: OutlineItem[], depth: number) => {
       for (const item of items) {
-        lines.push(`${'  '.repeat(depth)}- ${item.title}`);
+        lines.push(`${'  '.repeat(depth)}- ${item.label}`);
         render(item.children, depth + 1);
       }
     };
@@ -132,18 +192,23 @@ export function outlineToMarkdown(outline: PromptOutline): string {
     render(outline.decisions, 0);
   }
 
-  if (outline.open.length > 0) {
+  if (outline.notes.length > 0) {
     lines.push('');
-    lines.push('## 还可以继续细分');
+    lines.push('## 知识笔记（已纳入）');
     lines.push('');
-    for (const title of outline.open) lines.push(`- ${title}`);
+    for (const item of outline.notes) lines.push(`- ${item.label}`);
   }
 
-  if (outline.excluded.length > 0) {
+  if (outline.open.length > 0) {
     lines.push('');
-    lines.push('## 已排除');
+    lines.push('## 待具体化');
     lines.push('');
-    for (const title of outline.excluded) lines.push(`- ${title}`);
+    for (const label of outline.open) lines.push(`- ${label}`);
+  }
+
+  if (outline.excludedCount > 0) {
+    lines.push('');
+    lines.push(`_另有 ${outline.excludedCount} 项未纳入。_`);
   }
 
   return lines.join('\n');

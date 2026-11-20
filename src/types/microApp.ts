@@ -131,17 +131,40 @@ export interface PdfTranslation {
 export interface PromptMicroAppState {
   /** 每次发散提供几个选项（2–6，默认 3）。删除后可按这个数补齐 */
   optionCount: number;
+  /** 最近一次「生成成稿」的结果（Markdown） */
+  artifact?: string;
+  artifactAt?: number;
+  /** 生成时的勾选指纹：与当前指纹不一致 = 清单变了，建议重新生成 */
+  artifactFingerprint?: string;
 }
 
+/** Prompt 节点的语义类型 */
+export type PromptNodeKind = 'decision' | 'draft' | 'fact' | 'explain' | 'note';
+/** 节点是谁写的 */
+export type PromptNodeOrigin = 'ai' | 'user';
+
+const PROMPT_KINDS: PromptNodeKind[] = ['decision', 'draft', 'fact', 'explain', 'note'];
+
 /**
- * 一个"发散出来的选项"节点上的标记。
+ * 一个 Prompt 节点上的标记。
  *
  * 节点类型仍是 `ai-chat`：这样删除、撤销、导出、布局全都不用改，
  * 只靠 metadata 决定画布上用哪个渲染器（见 registry 的 loadNodeTypes）。
+ *
+ * 两个状态必须分开：
+ * - `expanded`：这一支往下展开过（LLM 细分 / 追问 / 手动加子节点）
+ * - `included`：这一条要进入最终成稿
+ * 展开不要求先勾选，勾选也不要求先展开。
  */
 export interface PromptNodeMeta {
-  /** 用户是否勾选。默认 false（需求：默认不选，由用户表达意图） */
+  /** 是否纳入最终成稿。默认 false（AI 提议不替用户做决定） */
+  included?: boolean;
+  /** @deprecated 旧字段；读取时回退为 included，新写入不再使用 */
   selected?: boolean;
+  /** 节点类型：决策 / 候选稿 / 事实 / 解释 / 笔记 */
+  kind?: PromptNodeKind;
+  /** 来源：AI 提议还是用户手写 */
+  origin?: PromptNodeOrigin;
   /** LLM 给出的一句话理由：定这一项会影响什么 */
   why?: string;
   /** 同一批发散的批次 id，用于补齐时去重与识别 */
@@ -167,13 +190,24 @@ export function getPromptNodeMeta(node: PrunusNode): PromptNodeMeta | null {
   if (!raw || typeof raw !== 'object') return null;
 
   const meta = raw as Record<string, unknown>;
+  const kind = meta.kind as PromptNodeKind | undefined;
+  const origin = meta.origin as PromptNodeOrigin | undefined;
+
   return {
-    selected: meta.selected === true,
+    // 旧数据只有 selected：读的时候当成 included，老 Prompt 会话不用迁移
+    included: meta.included === true || meta.selected === true,
+    kind: kind && PROMPT_KINDS.includes(kind) ? kind : 'decision',
+    origin: origin === 'user' ? 'user' : 'ai',
     why: typeof meta.why === 'string' ? meta.why : undefined,
     batchId: typeof meta.batchId === 'string' ? meta.batchId : undefined,
     expanded: meta.expanded === true,
     done: meta.done === true,
   };
+}
+
+/** 这一项是不是"LLM 提议的决策/候选稿"（补齐计数只看这一类） */
+export function isPromptProposal(meta: PromptNodeMeta | null): boolean {
+  return meta !== null && (meta.kind === 'decision' || meta.kind === 'draft');
 }
 
 /** 这个节点是不是 Prompt 的议题根 */

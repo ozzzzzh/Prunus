@@ -148,8 +148,8 @@ const PROMPT_KINDS: PromptNodeKind[] = ['decision', 'draft', 'fact', 'explain', 
 /**
  * 一个 Prompt 节点上的标记。
  *
- * 节点类型仍是 `ai-chat`：这样删除、撤销、导出、布局全都不用改，
- * 只靠 metadata 决定画布上用哪个渲染器（见 registry 的 loadNodeTypes）。
+ * 节点类型仍是 `ai-chat`：Prompt **复用主应用的 MessageNode**（编辑 / 分叉 /
+ * 收起 / 标记 / 缩放都是同一套），prompt 专属的只有勾选与「细分」，由 metadata 驱动。
  *
  * 两个状态必须分开：
  * - `expanded`：这一支往下展开过（LLM 细分 / 追问 / 手动加子节点）

@@ -31,9 +31,6 @@ import { cn } from '../../../utils/cn';
 import MarkdownText from '../../markdown/MarkdownText';
 import type { MicroAppPanelProps } from '../registry';
 
-/** 议题卡比发散节点宽一些，但比普通聊天卡片窄，避免一层就撑满画布 */
-const ROOT_WIDTH = 360;
-
 type PanelView = 'list' | 'artifact';
 
 export default function PromptPanel({ sessionId }: MicroAppPanelProps) {
@@ -43,7 +40,6 @@ export default function PromptPanel({ sessionId }: MicroAppPanelProps) {
   const promptState = session?.microApps?.prompt;
 
   const updateNodeContent = useSessionStore((state) => state.updateNodeContent);
-  const setNodeSize = useSessionStore((state) => state.setNodeSize);
   const renameSession = useSessionStore((state) => state.renameSession);
   const setSessionMicroApp = useSessionStore((state) => state.setSessionMicroApp);
 
@@ -76,7 +72,6 @@ export default function PromptPanel({ sessionId }: MicroAppPanelProps) {
       [PROMPT_ROOT_KEY]: true,
       [PROMPT_NODE_KEY]: { expanded: false },
     });
-    setNodeSize(rootNodeId, { width: ROOT_WIDTH });
     renameSession(sessionId, goal.slice(0, 24));
 
     const result = await expandPromptNode(sessionId, rootNodeId);

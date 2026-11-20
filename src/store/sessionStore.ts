@@ -15,7 +15,6 @@ import type {
   MicroAppId,
   PdfMicroAppState,
   PromptNodeMeta,
-  PromptNodeKind,
 } from '../types';
 import { ATTACHMENT_KEY, IMAGE_REF_KEY, PROMPT_NODE_KEY, getPromptNodeMeta } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
@@ -76,15 +75,6 @@ interface SessionState {
   }) => string[];
   /** 更新 Prompt 节点标记（纳入 / 展开 / 类型 / 已足够具体） */
   setPromptNodeMeta: (sessionId: string, nodeId: string, patch: Partial<PromptNodeMeta>) => void;
-  /**
-   * 手动加一个子节点（自由分叉）。
-   * 默认 kind='note'、included=true、origin='user'，返回新节点 id 供 UI 进入编辑态。
-   */
-  addPromptChild: (
-    sessionId: string,
-    parentId: string,
-    kind?: PromptNodeKind
-  ) => string | null;
 
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
@@ -136,15 +126,6 @@ interface SessionState {
 // ===== 工具函数 =====
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
-
-/**
- * Prompt 发散节点的固定宽度。
- *
- * 比普通卡片的 480 窄得多：一层三个，480 会把画布横向撑爆。
- * 写进 node.width 是因为布局（resolveNodeSize）只认节点自身的尺寸，
- * 渲染层的样式不会反馈给 dagre。
- */
-const PROMPT_NODE_WIDTH = 260;
 
 /**
  * 记录一次"可撤销变更"之前的会话快照。
@@ -512,8 +493,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           parentId,
           role: 'assistant',
           content: item.title,
+          // 有 marker 才有"收起/标记"这套原生能力（Prompt 复用 MessageNode）
+          marker: '🍃',
         });
-        node.width = PROMPT_NODE_WIDTH;
         node.metadata = {
           [PROMPT_NODE_KEY]: {
             included: false,
@@ -586,60 +568,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         },
       };
     });
-  },
-
-  addPromptChild: (sessionId, parentId, kind = 'note') => {
-    const session = get().sessions[sessionId];
-    const parent = session?.nodes[parentId];
-    if (!session || !parent) return null;
-
-    useHistoryStore.getState().push(sessionId, session);
-
-    const id = generateId();
-
-    set((state) => {
-      const currentSession = state.sessions[sessionId];
-      const currentParent = currentSession?.nodes[parentId];
-      if (!currentSession || !currentParent) return state;
-
-      const node = createAIChatNode({
-        id,
-        parentId,
-        role: 'user',
-        content: '',
-      });
-      node.width = PROMPT_NODE_WIDTH;
-      node.metadata = {
-        [PROMPT_NODE_KEY]: {
-          included: true,
-          kind,
-          origin: 'user',
-        } satisfies PromptNodeMeta,
-      };
-
-      return {
-        ...state,
-        sessions: {
-          ...state.sessions,
-          [sessionId]: {
-            ...currentSession,
-            nodes: {
-              ...currentSession.nodes,
-              [id]: node,
-              [parentId]: {
-                ...currentParent,
-                childrenIds: [...currentParent.childrenIds, id],
-                marker: currentParent.marker === '🍃' ? '🪵' : currentParent.marker,
-                updatedAt: Date.now(),
-              },
-            },
-            updatedAt: Date.now(),
-          },
-        },
-      };
-    });
-
-    return id;
   },
 
   addBranchedMessages: (role, contents, targetParentId) => {

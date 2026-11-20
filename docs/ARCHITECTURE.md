@@ -83,11 +83,12 @@ flowchart LR
 1. **节点只承载内容与勾选。** 不在卡片里放类型、来源、状态的小标签或小字
    （例如「候选稿」「AI 建议」「我的补充」「已细分 N 项」「已足够具体」「解释」）。
    状态用形态表达：勾选/未勾选、虚线/实线、颜色深浅。
-2. **次要信息默认不占版面。** 理由、解释、说明这类内容在 hover 时以**浮层**出现，
-   浮层必须有边框/背景/阴影等明确边界；**绝不能插进正文导致节点高度变化**
-   （hover 引起重排会让整棵树抖动）。参考 `PromptNode` 的 why 浮层。
-3. **操作集中在节点工具栏。** 细分、分叉、编辑、删除放在 hover 出现的工具栏里，
-   不在卡片下方为单个动作额外加按钮。工具栏本身也要轻量（图标 + 原生 title）。
+2. **次要信息集成在节点内，有明确边界且可缩略。** 理由、说明这类内容用分隔线/
+   浅底划出独立区块，默认只显示一行（`line-clamp-1`），用图标展开/收起。
+   **不要用 hover 浮层**（会和树结构重叠，也容易挡连线），也不要把说明混进正文。
+3. **操作集中在节点工具栏（header 右侧的图标组）**，随节点激活显示；
+   细分、分叉、编辑、删除都放这里，不在卡片下方为单个动作额外加按钮。
+   工具栏本身要轻量（图标 + 原生 title）。
 4. **不用文字提示代替状态。** 不要写「默认不进入成稿」「已纳入」「未纳入」这类说明；
    用户应该从勾选、边框、颜色直接看出来。
 5. **面板与画布以内容为主。** 标题、计数、说明能删则删；保留的必须是结构
@@ -96,8 +97,8 @@ flowchart LR
    **避免纯文字按钮或纯文字状态标签**。icon-only 按钮必须带 `title`（必要时
    `aria-label`），同一操作在全应用使用同一个 lucide 图标（例如分叉统一 `GitBranch`）。
 
-违反上述任何一条，即使功能正确也算 UI 缺陷。Prompt 工作台的 `PromptNode` 是
-这条基调的参考实现。
+违反上述任何一条，即使功能正确也算 UI 缺陷。Prompt 工作台的节点
+（`MessageNode` + prompt metadata）是这条基调的参考实现。
 
 ---
 
@@ -570,8 +571,11 @@ flowchart LR
 2. **微应用不"操作"主应用**：PDF 只产出一段摘录（原文 + 出处）；Prompt 只往会话里
    加/改自己的节点。它们都不直接操作画布的视图状态。
 3. **没有插件系统**：`registry.tsx` 是一张表；加微应用是"加一行"。现在有两行
-   （`pdf` / `prompt`），接口仍然只有 `load` 和可选的 `loadNodeTypes` ——
-   刻意不做沙箱、第三方加载、权限模型。
+   （`pdf` / `prompt`），接口只有 `load`（面板按需加载）—— 刻意不做沙箱、
+   第三方加载、权限模型。
+4. **微应用不注册自己的节点外观**：Prompt 复用主应用的 `MessageNode`，
+   编辑、分叉、收起、标记、缩放都是同一套；prompt 专属的勾选与「细分」
+   由节点 metadata 驱动。不要为微应用再造一个平行节点组件。
 
 ### 8.2 宿主与生命周期
 
@@ -589,8 +593,6 @@ sequenceDiagram
   L->>UI: setActiveMicroApp('pdf')
   H->>R: MICRO_APPS.pdf.load()
   R-->>H: 动态 import → PdfPanel
-  H->>R: MICRO_APPS.pdf.loadNodeTypes()
-  R-->>H: 节点类型（PDF 没有，返回空）
   H->>H: 渲染 <PdfPanel sessionId />
   Note over H: 面板宿主常驻挂载（内部 return null）<br/>避免条件渲染导致画布重挂载、丢失视口
   U->>H: 拖动分隔条
@@ -600,10 +602,8 @@ sequenceDiagram
 - 面板宽度存在 `uiStore.microAppWidth`，渲染时写进 CSS 变量 `--micro-app-w`；
   拖动过程中**只改变量**，等松手再写 store。
 - 窄屏（`MIN_VIEWPORT_PX` 以下）打开微应用会自动收起，靠 `matchMedia` 监听。
-- **节点类型也按需加载**：`MicroAppDescriptor.loadNodeTypes` 可选，加载后注册进
-  `useMicroAppNodeTypesStore`，`ChatCanvas` 再把它合并到 `nodeTypes`。这样主应用的
-  `MessageNode` 保持原样，聊天会话永远不会带上别的微应用的节点代码。
-  过期数据（例如 Prompt 节点在类型还没加载时）会先按 `message` 渲染一帧，加载完再切换。
+- 微应用只按需加载**面板**；画布节点始终是 `MessageNode`。Prompt 的树复用
+  主应用节点的编辑、分叉、收起、标记与缩放，不为微应用维护第二套节点组件。
 
 ### 8.3 PDF 面板的分层渲染
 
@@ -801,23 +801,24 @@ PDF 文本层是普通 `<div>`，拖选文字不会让任何元素获得焦点�
 把"写提示词"变成"做选择"：用户给一个模糊议题，LLM 每次发散出几个方向，
 用户勾选需要的，逐层细分；右侧画布是决策树，左侧面板实时把它渲染成层级型提示词。
 
-> **UI 必须遵守 §1.4**：节点不放大类/来源/状态小标签，why 只在 hover 的浮层里出现，
-> 所有操作收进 hover 工具栏。`PromptNode` 是这条基调的参考实现。
+> **UI 必须遵守 §1.4**：节点不放大类/来源/状态小标签；why 集成在节点内、
+> 用分隔线划出独立区块、默认单行可展开；操作收进节点 header 的图标工具栏。
+> 不要用 hover 浮层（会和树结构重叠）。
 
-#### 独立会话 + 独立节点外观
+#### 独立会话 + 复用 MessageNode
 
 - Prompt 是**独立会话**（`microApps.prompt` 存在即算），不从聊天会话"开个开关"：
   根节点就是议题，树上所有节点都由发散产生，混进聊天记录会让两者都变含糊。
-- 节点类型仍是 `ai-chat`，只加 metadata（`promptNode` / `promptRoot`），
-  所以删除、撤销、持久化、导出全部复用现有能力。
-- 画布外观由 `PromptNode` 负责，经 `loadNodeTypes` 按需加载（见 §8.2）。
-  `MessageNode` 一行都不用改 —— 这是"到不同的地方穿不同的衣服"。
+- **节点复用主应用的 `MessageNode`**，只加 metadata（`promptNode` / `promptRoot`）。
+  编辑、选中分叉、收起、标记、缩放、链路编辑全部是同一套，不维护平行节点组件。
+- prompt 专属的只有两件事：纳入成稿的勾选框、header 里的「细分 / 再想几个」。
+  两者都由 metadata 驱动；非 Prompt 会话完全不受影响。
 
 #### 两个状态必须分开
 
 | 状态 | 含义 | 默认 |
 |---|---|---|
-| **展开（expanded）** | 这一支往下想过（细分 / 追问 / 手动加子节点） | — |
+| **展开（expanded）** | 这一支往下想过（细分 / 追问 / 选中分叉） | — |
 | **纳入（included）** | 这一条要进入最终成稿 | AI 提议：否；用户手写：是；解释：否 |
 
 **展开不要求先勾选，勾选也不要求先展开。** 这是"先探索、后选择"的前提。
@@ -852,23 +853,22 @@ node.metadata.promptRoot = true
 |---|---|
 | `addPromptProposals({ sessionId, parentId, items, batchId })` | 批量创建**未纳入**节点（`kind` 由 LLM 返回）；一步撤销；不移动 `currentNodeId` |
 | `setPromptNodeMeta(sessionId, nodeId, patch)` | 纳入 / 展开 / 类型 / 已足够具体；可撤销 |
-| `addPromptChild(sessionId, parentId, kind='note')` | 手动分叉：默认纳入、origin=user，返回 id 供 UI 进入编辑态 |
 | `deleteNode` | 复用现有删除 |
 | `expandPromptNode(sessionId, nodeId)` | 发散 / 补齐（`utils/promptExpand.ts`） |
 | `synthesizePrompt(sessionId)` | 成稿（`utils/promptSynthesis.ts`） |
 
-#### 编辑、手动分叉与追问
+#### 编辑、选中分叉与追问
 
-- **编辑**：双击节点进入 contentEditable，复用 `SelectionToolbar`；失焦保存。
-  内容可能是 HTML，左侧清单与成稿一律走 `htmlToPlainText`。
-  编辑态与展示态必须用不同的 React key（同为 `<div>` 会被复用，浏览器手写进去的
-  文本不会在退出编辑时被清掉，表现为"内容重复一遍"）。
-- **手动分叉**：节点上的 `＋` 创建空节点并进入编辑态；`kind='note'`、默认纳入。
-  它不设置 `expanded`，所以之后再点「细分」仍然会得到 AI 提议。
+- **编辑**：双击节点直接复用 `MessageNode` 的 contentEditable 与 `SelectionToolbar`；
+  失焦保存。内容可能是 HTML，左侧清单与成稿一律走 `htmlToPlainText`。
+- **选中分叉**：编辑态里选中一段文字 → 浮条上的「复制摘取 / 移动摘取」创建
+  **兄弟节点**。这就是 Prompt 的"分叉"入口，复用聊天节点的既有能力，不额外加按钮。
+  新节点会自动标成 `kind:'note'`、`origin:'user'`、`included:true`，
+  因此会进入 Prompt 树与成稿。
 - **追问**：底部聊天框在 Prompt 会话里恢复显示。`ChatInput` 新建的 user/assistant
   节点会被 `tagPromptChatNode` 标成 `kind:'explain'`、`included:false`，
   所以它们天然不进成稿；勾选后作为「知识笔记」进入成稿的备注。
-  解释卡片支持继续追问、编辑、手动补子节点。
+  解释节点同样复用 MessageNode，可以继续追问、编辑、收起、标记。
 
 #### 一次发散的时序
 
@@ -876,7 +876,7 @@ node.metadata.promptRoot = true
 sequenceDiagram
   autonumber
   participant U as 用户
-  participant N as PromptNode
+  participant N as MessageNode
   participant E as utils/promptExpand
   participant API as 聊天模型
   participant S as sessionStore
@@ -1054,11 +1054,14 @@ stateDiagram-v2
 13. **元数据读取一律带守卫**：`metadata` 可能来自导入的 JSON，脏数据只该让一个角标不显示，不该让整棵树崩掉。
 14. **图片不进每轮上下文**：规则见 §7.3，靠 `sawAssistant` 无状态判断，不要加"已发送"标记
     （请求失败时那种标记会错乱）。
-15. **微应用的节点外观按需注册**：不要为了让 Prompt 节点好看去改 `MessageNode`。
-    通过 `registry.loadNodeTypes` 注册一个独立组件，主应用的聊天节点不背这份逻辑。
-    加载后**不注销**（已渲染的节点需要它），隔离靠"不进首屏包 + 聊天会话用不到"。
+15. **Prompt 复用 `MessageNode`，不要另造节点组件**：编辑、选中分叉、收起、标记、
+    缩放都走主应用那一套；prompt 专属的只有勾选与 header 里的「细分 / 再想几个」，
+    由 metadata 驱动。这样用户看到的是同一棵树，而不是一套平行 UI。
 16. **Prompt 的 LLM 请求必须带 `sessionId`**：请求是异步的，期间用户可能切走；
     `addPromptProposals` / `setPromptNodeMeta` 显式接收会话 id，不要读 `activeSessionId`。
+17. **选中工具条在松手后才出现**：`SelectionToolbar` 由 `pointerdown` 收起、
+    `pointerup`/`keyup` 定稿后显示；`selectionchange` 只负责收起。
+    拖选过程中不要更新位置，否则工具条会跟着光标飞。
 
 ---
 
@@ -1144,7 +1147,6 @@ src/
 │   ├── dialogStore.ts          confirm / prompt / toast
 │   ├── pdfViewerStore.ts       「跳到某页」跨组件信号
 │   ├── imageDraftStore.ts      待发送截图草稿
-│   ├── microAppNodeTypes.ts    微应用按需注册的画布节点类型
 │   └── chatStore.ts            @deprecated 兼容门面
 ├── services/persistenceService.ts  初始化、防抖自动保存、导入导出、清空
 ├── repository/                 仓储接口 + IndexedDB 实现
@@ -1202,8 +1204,8 @@ src/
 │   │   │   ├── TranslationBox.tsx  译文白块、字号拟合、悬停工具条
 │   │   │   └── pdfTextLayer.css    文本层与选中样式
 │   │   └── prompt/
-│   │       ├── PromptPanel.tsx     左侧：议题输入 + 实时层级提示词 + 复制
-│   │       └── PromptNode.tsx      画布节点：勾选 / 细分 / 补齐 / 删除
+│   │       └── PromptPanel.tsx     左侧：议题输入 + 实时清单 + 成稿
+│   │                              （画布节点复用 MessageNode，不另建组件）
 │   ├── markdown/MarkdownText.tsx   统一 Markdown 渲染（含流式分段）
 │   └── onboarding/             引导、帮助、完成弹窗
 └── index.css                   主题色、画布纹理、Markdown prose、滚动条

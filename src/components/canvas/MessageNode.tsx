@@ -1,8 +1,8 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera, Copy, Scissors } from 'lucide-react';
+import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera, Copy, Scissors, Sparkles, Wand2 } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
-import { isAIChatNode, getNodeAttachment, getNodePdfRef, getNodeImageRef, isPdfQuote, PDF_QUOTE_KEY } from '../../types';
+import { isAIChatNode, getNodeAttachment, getNodePdfRef, getNodeImageRef, isPdfQuote, PDF_QUOTE_KEY, getPromptNodeMeta, isPromptRoot } from '../../types';
 import { usePdfViewerStore } from '../../store/pdfViewerStore';
 import { hasLocalPdf } from '../../utils/pdfDocumentStore';
 import { useChatStore } from '../../store/chatStore';
@@ -50,6 +50,13 @@ function MessageNode({ data }: MessageNodeProps) {
   const toggleNodeCollapse = useChatStore((state) => state.toggleNodeCollapse);
   const deleteNode = useSessionStore((state) => state.deleteNode);
   const updateNodeContent = useSessionStore((state) => state.updateNodeContent);
+  const setPromptNodeMeta = useSessionStore((state) => state.setPromptNodeMeta);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const promptOptionCount = useSessionStore((state) =>
+    state.activeSessionId
+      ? state.sessions[state.activeSessionId]?.microApps?.prompt?.optionCount ?? 3
+      : 3
+  );
   const editingNodeId = useUIStore((state) => state.editingNodeId);
   const setEditingNode = useUIStore((state) => state.setEditingNode);
   const setExpandedNode = useUIStore((state) => state.setExpandedNode);
@@ -398,6 +405,79 @@ function MessageNode({ data }: MessageNodeProps) {
   // 判断是否为根节点
   const isRootNode = !node.parentId;
 
+  /**
+   * Prompt 节点复用主应用的 MessageNode。
+   *
+   * 这是刻意的：Prompt 树本来就是 Prunus 的树，用户要的是同一套编辑、分叉、
+   * 收起、标记与缩放，而不是一套平行组件。prompt 专属的只有勾选与「细分」。
+   */
+  const promptMeta = getPromptNodeMeta(node);
+  const isPromptNode = promptMeta !== null || isPromptRoot(node);
+  const promptIncluded = promptMeta?.included === true;
+  const promptKind = promptMeta?.kind ?? 'decision';
+  const isPromptExplain = promptKind === 'explain';
+  const isPromptFact = promptKind === 'fact';
+  const promptExpanded = promptMeta?.expanded === true;
+  const promptDone = promptMeta?.done === true;
+
+  // 只数 AI 提议的决策/候选稿：手动笔记、解释、摘取出来的兄弟节点不占发散名额
+  const promptProposalCount = node.childrenIds.reduce((count, childId) => {
+    const session = useSessionStore.getState();
+    const child = session.activeSessionId
+      ? session.sessions[session.activeSessionId]?.nodes[childId]
+      : undefined;
+    const childMeta = child ? getPromptNodeMeta(child) : null;
+    return childMeta && (childMeta.kind === 'decision' || childMeta.kind === 'draft')
+      ? count + 1
+      : count;
+  }, 0);
+
+  const canPromptExpand =
+    isPromptNode &&
+    !isPromptExplain &&
+    !isPromptFact &&
+    !promptExpanded &&
+    !promptDone;
+  const canPromptReplenish =
+    isPromptNode &&
+    !isPromptExplain &&
+    !isPromptFact &&
+    promptExpanded &&
+    !promptDone &&
+    promptProposalCount < promptOptionCount;
+
+  const [promptBusy, setPromptBusy] = useState(false);
+  const [whyExpanded, setWhyExpanded] = useState(false);
+
+  const handlePromptToggleIncluded = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!activeSessionId || !isPromptNode) return;
+    setPromptNodeMeta(activeSessionId, node.id, { included: !promptIncluded });
+  };
+
+  /**
+   * 「细分」的发散调用按需加载：Prompt 的 LLM 工具不该因为节点复用而进首屏包。
+   */
+  const handlePromptExpand = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (promptBusy || !activeSessionId) return;
+
+    setPromptBusy(true);
+    try {
+      const { expandPromptNode } = await import('../../utils/promptExpand');
+      const result = await expandPromptNode(activeSessionId, node.id);
+      if (result === 'done') {
+        useDialogStore.getState().showToast('这一项已经足够具体了', { type: 'info' });
+      } else if (result === 'error') {
+        useDialogStore.getState().showToast('发散失败，请稍后重试', { type: 'error' });
+      }
+    } finally {
+      setPromptBusy(false);
+    }
+  };
+
   // 判断当前节点是否正在流式生成
   const isStreaming = isAIChat && role === 'assistant' && isThisStreaming;
 
@@ -575,6 +655,15 @@ function MessageNode({ data }: MessageNodeProps) {
     // 创建新节点
     const newNodeId = useSessionStore.getState().addMessage(role, html, parentId);
 
+    // Prompt 会话里，选中文字分叉出来的兄弟节点要进入 Prompt 树（默认纳入、用户手写）
+    if (isPromptNode && activeSessionId) {
+      setPromptNodeMeta(activeSessionId, newNodeId, {
+        included: true,
+        kind: 'note',
+        origin: 'user',
+      });
+    }
+
     // 清空保存的选区
     setSavedSelection('');
 
@@ -647,6 +736,15 @@ function MessageNode({ data }: MessageNodeProps) {
     const parentId = node.parentId ?? undefined;
     const role = isAIChat ? node.role : 'user';
     const newNodeId = useSessionStore.getState().addMessage(role, html, parentId);
+
+    // Prompt 会话里的选中分叉：新兄弟节点默认纳入成稿
+    if (isPromptNode && activeSessionId) {
+      setPromptNodeMeta(activeSessionId, newNodeId, {
+        included: true,
+        kind: 'note',
+        origin: 'user',
+      });
+    }
 
     // 6. 清空保存的选区
     setSavedSelection('');
@@ -989,12 +1087,19 @@ function MessageNode({ data }: MessageNodeProps) {
           isSelectingMode && !isEditing && !isSelected && !isRootNode && "bg-white opacity-100 hover:border-leaf-300 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)]",
           isSelectingMode && !isEditing && !isSelected && isRootNode && "opacity-40",
           !isEditing && !isSelectingMode && isClickable && "hover:opacity-100 cursor-pointer hover:border-leaf-300 hover:bg-white hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.08)] hover:z-10",
+          // Prompt 节点：未纳入用虚线，纳入用浅绿边框。没有额外标签，状态靠形态表达。
+          isPromptNode && !isRootNode && !promptIncluded && "border-dashed",
+          isPromptNode && promptIncluded && !isActive && "border-leaf-200",
           // 检索命中：用琥珀色，与"当前焦点"的 leaf 绿刻意区分开 ——
           // 一个节点可以既不是焦点又是命中，两者混用同一种颜色会分不清。
           // 放在最后，保证它能盖过上面的焦点样式
           isSearchHit && !isEditing && "ring-2 ring-amber-300 border-amber-300 opacity-100"
         )}
         data-tour={isActive ? "current-node" : isRootNode ? "root-node" : undefined}
+        data-prompt-node={
+          isPromptNode ? (isRootNode ? "root" : promptIncluded ? "included" : "unincluded") : undefined
+        }
+        data-prompt-kind={isPromptNode ? (isPromptRoot(node) ? "root" : promptKind) : undefined}
       >
         {node.marker && (
           <div
@@ -1016,15 +1121,35 @@ function MessageNode({ data }: MessageNodeProps) {
 
         <div className="flex justify-between items-center mb-3 shrink-0">
           <div className="flex items-center gap-2 pointer-events-none">
+            {/* Prompt：纳入成稿的勾选。议题根没有这一项。 */}
+            {isPromptNode && !isRootNode && (
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={handlePromptToggleIncluded}
+                title={promptIncluded ? "取消纳入成稿" : "纳入成稿"}
+                className={cn(
+                  "pointer-events-auto w-4 h-4 shrink-0 rounded border flex items-center justify-center transition-colors",
+                  promptIncluded
+                    ? "bg-leaf-600 border-leaf-600 text-white"
+                    : "bg-white border-gray-300 text-transparent hover:border-leaf-400"
+                )}
+              >
+                <Check size={11} strokeWidth={3} />
+              </button>
+            )}
+
+            {/*
+              角色只用图标表达。UI 基调（ARCHITECTURE §1.4）禁止在卡片里放
+              「ASSISTANT / Active / Editing」这类类型/状态小字；状态用边框、颜色、
+              勾选等形态表达。
+            */}
             <div className={cn(
               "p-1.5 rounded-lg flex items-center justify-center",
               isUser ? "bg-leaf-100 text-leaf-700" : isSystem ? "bg-gray-100 text-gray-600" : "bg-blossom-light text-leaf-700"
             )}>
               {isUser ? <User size={14} /> : isSystem ? <Cpu size={14} /> : <Bot size={14} />}
             </div>
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              {role}
-            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1051,7 +1176,25 @@ function MessageNode({ data }: MessageNodeProps) {
               </div>
             )}
 
-            {canSplit && isActive && !isSplitting && !isSelectingMode && (
+            {/* Prompt：细分 / 再想几个。按需加载 Prompt 的 LLM 工具，不进首屏包。 */}
+            {isActive && !isSelectingMode && (canPromptExpand || canPromptReplenish) && (
+              <button
+                onClick={handlePromptExpand}
+                title={canPromptReplenish ? "再想几个" : "细分"}
+                className="p-1.5 text-gray-400 hover:text-leaf-600 hover:bg-leaf-50 rounded-md transition-colors"
+              >
+                {promptBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : canPromptReplenish ? (
+                  <Wand2 size={14} />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+              </button>
+            )}
+
+            {/* Branch Out 只属于聊天树；Prompt 的分叉走"编辑态选中 → 复制/移动摘取" */}
+            {canSplit && isActive && !isSplitting && !isSelectingMode && !isPromptNode && (
               <button
                 onClick={handleSplit}
                 title="Split into multiple branches"
@@ -1099,17 +1242,6 @@ function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {isEditing && (
-              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full pointer-events-none">
-                Editing
-              </span>
-            )}
-
-            {!isEditing && isActive && (
-              <span className="text-[10px] font-medium text-leaf-600 bg-leaf-50 px-2 py-0.5 rounded-full pointer-events-none">
-                Active
-              </span>
-            )}
           </div>
         </div>
 
@@ -1260,6 +1392,39 @@ function MessageNode({ data }: MessageNodeProps) {
             </div>
           )}
         </div>
+
+        {/*
+          Prompt 的理由：不塞进正文，也不靠 hover 浮层（会和树重叠）。
+          放在卡片内、用一条分隔线划出独立区块；默认只显示一行，可展开/收起。
+        */}
+        {isPromptNode && promptMeta?.why && (
+          <div className="mt-2 shrink-0 border-t border-gray-100 pt-2">
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setWhyExpanded((v) => !v);
+              }}
+              className="flex w-full items-start gap-1 text-left"
+            >
+              {whyExpanded ? (
+                <ChevronDown size={12} className="mt-0.5 shrink-0 text-gray-300" />
+              ) : (
+                <ChevronRight size={12} className="mt-0.5 shrink-0 text-gray-300" />
+              )}
+              <span
+                className={cn(
+                  "text-[11px] leading-snug text-gray-400",
+                  !whyExpanded && "line-clamp-1"
+                )}
+              >
+                {promptMeta.why}
+              </span>
+            </button>
+          </div>
+        )}
 
         <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
 

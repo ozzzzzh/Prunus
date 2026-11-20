@@ -23,9 +23,7 @@ import { useSessionStore } from '../../store/sessionStore';
 import { useGenerationStore } from '../../store/generationStore';
 import { useNodeSizeStore } from '../../store/nodeSizeStore';
 import { useUIStore } from '../../store/uiStore';
-import { useMicroAppNodeTypesStore } from '../../store/microAppNodeTypes';
 import { isAIChatNode } from '../../types';
-import { getPromptNodeMeta, isPromptRoot } from '../../types/microApp';
 import type { SummaryNodeInput } from '../../utils/summarize';
 import { cn } from '../../utils/cn';
 import { resolveNodeSize } from '../../utils/nodeSize';
@@ -124,15 +122,10 @@ export default function ChatCanvas() {
     Boolean(activeSessionId && sessions[activeSessionId]?.microApps?.prompt);
 
   /**
-   * 微应用贡献的节点类型。只有真的打开过对应微应用才会有内容；
-   * 合并进来之后画布就能渲染 Prompt 的节点外观，而 MessageNode 一行都不用改。
+   * Prompt 节点复用 MessageNode（编辑/分叉/收起/标记/缩放全共用），
+   * 所以画布只有一种节点类型，不再有"按微应用注册节点外观"那一层。
    */
-  const microAppNodeTypes = useMicroAppNodeTypesStore(state => state.nodeTypes);
-  const nodeTypes = useMemo(
-    () => ({ ...BASE_NODE_TYPES, ...microAppNodeTypes }),
-    [microAppNodeTypes]
-  );
-  const promptNodeReady = Boolean(microAppNodeTypes.prompt);
+  const nodeTypes = BASE_NODE_TYPES;
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
 
@@ -188,30 +181,15 @@ export default function ChatCanvas() {
       // 尺寸来源与布局完全一致（measuredSizes 就是卡片的实测高度），不存在双真源。
       const { width, height } = resolveNodeSize(node, measuredSizes[node.id]);
 
-      /**
-       * Prompt 节点走微应用自己的渲染器。
-       *
-       * `promptNodeReady` 很重要：节点类型是异步加载的，在它到位之前如果直接写
-       * `type: 'prompt'`，React Flow 会报"找不到节点类型"并渲染成默认节点。
-       * 等类型注册好之后 `initialNodes` 会重算一次，节点自然切换过去。
-       */
-      const promptRoot = promptNodeReady && isPromptRoot(node);
-      const promptChild = promptNodeReady && getPromptNodeMeta(node) !== null;
-
       nodes.push({
         id: node.id,
-        type: promptRoot || promptChild ? 'prompt' : 'message',
+        type: 'message',
         position: { x: 0, y: 0 }, // 由 getLayoutedElements 计算
         width,
         height,
         // isSearchHit 是渲染相关字段 —— 加进 MessageNode 的 arePropsEqual 白名单，
         // 否则检索高亮会因为 memo 命中而刷不出来
-        data: {
-          node,
-          isActive: isCurrentFocus,
-          isSearchHit: searchActiveNodeId === node.id,
-          promptRoot,
-        },
+        data: { node, isActive: isCurrentFocus, isSearchHit: searchActiveNodeId === node.id },
       });
 
       node.childrenIds.forEach(childId => {
@@ -233,7 +211,7 @@ export default function ChatCanvas() {
     });
 
     return getLayoutedElements(nodes, edges, 'TB', measuredSizes);
-  }, [session, sizeStates, measuredSizes, searchActiveNodeId, promptNodeReady]);
+  }, [session, sizeStates, measuredSizes, searchActiveNodeId]);
 
   // Using controlled state for React Flow to allow interactions if needed
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);

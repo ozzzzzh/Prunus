@@ -1,5 +1,5 @@
 import { Handle, Position, NodeToolbar, useStoreApi } from '@xyflow/react';
-import { Bot, User, Cpu, SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera, Copy, Scissors, Sparkles, Wand2 } from 'lucide-react';
+import { SplitSquareHorizontal, Loader2, Tag, X, Brain, Trash2, ChevronDown, ChevronRight, Lightbulb, Maximize2, Check, Paperclip, FileText, Camera, Copy, Scissors, Sparkles, Wand2 } from 'lucide-react';
 import MarkdownText from '../markdown/MarkdownText';
 import type { PrunusNode, NodeMarker, AIChatNode } from '../../types';
 import { isAIChatNode, getNodeAttachment, getNodePdfRef, getNodeImageRef, isPdfQuote, PDF_QUOTE_KEY, getPromptNodeMeta, isPromptRoot } from '../../types';
@@ -396,8 +396,6 @@ function MessageNode({ data }: MessageNodeProps) {
 
   const isAIChat = isAIChatNode(node);
   const role = isAIChat ? node.role : null;
-  const isUser = role === 'user';
-  const isSystem = role === 'system';
 
   const isClickable = !isActive;
   const canSplit = isAIChat && role === 'assistant' && node.childrenIds.length === 0 && !isSplitting;
@@ -988,7 +986,7 @@ function MessageNode({ data }: MessageNodeProps) {
           offset={8}
           className="!bg-gray-900 text-white text-xs rounded-lg px-4 py-2.5 shadow-lg w-64"
         >
-          <div className="font-medium mb-1">{node.marker} {role}</div>
+          <div className="font-medium mb-1">{node.marker}</div>
           <div className="text-gray-300 text-[11px] leading-relaxed">{getSummary()}</div>
         </NodeToolbar>
 
@@ -1139,17 +1137,6 @@ function MessageNode({ data }: MessageNodeProps) {
               </button>
             )}
 
-            {/*
-              角色只用图标表达。UI 基调（ARCHITECTURE §1.4）禁止在卡片里放
-              「ASSISTANT / Active / Editing」这类类型/状态小字；状态用边框、颜色、
-              勾选等形态表达。
-            */}
-            <div className={cn(
-              "p-1.5 rounded-lg flex items-center justify-center",
-              isUser ? "bg-leaf-100 text-leaf-700" : isSystem ? "bg-gray-100 text-gray-600" : "bg-blossom-light text-leaf-700"
-            )}>
-              {isUser ? <User size={14} /> : isSystem ? <Cpu size={14} /> : <Bot size={14} />}
-            </div>
           </div>
 
           <div className="flex items-center gap-2">

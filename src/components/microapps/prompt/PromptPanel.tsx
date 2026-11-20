@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  Eye,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -154,9 +155,9 @@ export default function PromptPanel({ sessionId }: MicroAppPanelProps) {
           </div>
           <button
             onClick={() => createPromptSession(null)}
-            className="px-4 py-2 text-sm font-medium text-white bg-leaf-600 hover:bg-leaf-700 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-leaf-600 hover:bg-leaf-700 rounded-lg transition-colors"
           >
-            新建 Prompt 会话
+            <Sparkles size={14} /> 新建 Prompt 会话
           </button>
         </div>
       </div>
@@ -301,17 +302,14 @@ export default function PromptPanel({ sessionId }: MicroAppPanelProps) {
           </div>
 
           <div className="shrink-0 border-t border-gray-100 px-4 py-3 flex items-center justify-between gap-2">
-            <span className="text-[11px] text-gray-400">
-              {outline.includedCount} 项已纳入
-              {outline.excludedCount > 0 ? ` · ${outline.excludedCount} 项未纳入` : ''}
-            </span>
+            <span className="text-[11px] text-gray-400">{outline.includedCount} 项已纳入</span>
             <div className="flex items-center gap-1.5">
               {artifact && (
                 <button
                   onClick={() => setView('artifact')}
-                  className="px-3 py-1.5 rounded-md text-xs text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
                 >
-                  查看成稿
+                  <Eye size={13} /> 查看成稿
                 </button>
               )}
               <button

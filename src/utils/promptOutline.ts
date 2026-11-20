@@ -206,10 +206,5 @@ export function outlineToMarkdown(outline: PromptOutline): string {
     for (const label of outline.open) lines.push(`- ${label}`);
   }
 
-  if (outline.excludedCount > 0) {
-    lines.push('');
-    lines.push(`_另有 ${outline.excludedCount} 项未纳入。_`);
-  }
-
   return lines.join('\n');
 }

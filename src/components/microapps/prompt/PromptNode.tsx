@@ -4,11 +4,12 @@
  * 这是 Prompt 微应用"穿的衣服"：主应用的 MessageNode 完全不知道它的存在。
  * 只在 `registry.loadNodeTypes` 被打开时才加载并注册到画布上。
  *
- * 四种形态：
- * - 议题根：显示目标，没有勾选框；
- * - 未纳入：虚线、空勾选框，内容照常可读、可展开；
- * - 已纳入：实心勾选、绿色描边；
- * - 解释：追问产生的问答，浅色「笔记」样式，默认不纳入。
+ * **UI 基调（改这个文件前先读 ARCHITECTURE §1.4）**：
+ * - 节点只承载内容与勾选，不放类型/来源/状态的小标签或小字；
+ * - 次要信息（why）默认不占版面，hover 时以浮层出现，有边框和背景作边界，
+ *   并且**不能改变节点尺寸**（否则布局会随 hover 抖动）；
+ * - 所有操作集中在 hover 工具栏里（细分 / 分叉 / 编辑 / 删除），
+ *   不在卡片下方另外加按钮。
  *
  * 核心约定：**勾选 = 纳入成稿，展开不要求先勾选**。
  * 所有状态都在节点 metadata 里（见 types/microApp.ts 的 PromptNodeMeta），
@@ -19,22 +20,15 @@ import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import {
   Check,
+  GitBranch,
   Loader2,
-  Lock,
-  MessageCircle,
   Pencil,
-  Plus,
   Sparkles,
-  StickyNote,
   Wand2,
   X,
 } from 'lucide-react';
 import type { PrunusNode } from '../../../types';
-import {
-  getPromptNodeMeta,
-  isPromptRoot,
-  type PromptNodeKind,
-} from '../../../types/microApp';
+import { getPromptNodeMeta, isPromptRoot, type PromptNodeKind } from '../../../types/microApp';
 import { useSessionStore } from '../../../store/sessionStore';
 import { useGenerationStore } from '../../../store/generationStore';
 import { useDialogStore } from '../../../store/dialogStore';
@@ -53,14 +47,6 @@ interface PromptNodeProps {
     promptRoot?: boolean;
   };
 }
-
-const KIND_BADGE: Record<PromptNodeKind, { label: string; className: string; icon: ReactNode }> = {
-  decision: { label: 'AI 建议', className: 'text-gray-400', icon: null },
-  draft: { label: '候选稿', className: 'text-leaf-600 bg-leaf-50', icon: <Sparkles size={9} /> },
-  fact: { label: '事实', className: 'text-sky-600 bg-sky-50', icon: <Lock size={9} /> },
-  explain: { label: '解释', className: 'text-slate-500 bg-slate-100', icon: <MessageCircle size={9} /> },
-  note: { label: '我的补充', className: 'text-amber-600 bg-amber-50', icon: <StickyNote size={9} /> },
-};
 
 function PromptNode({ data }: PromptNodeProps) {
   const { node, promptRoot } = data;
@@ -94,7 +80,6 @@ function PromptNode({ data }: PromptNodeProps) {
   const meta = getPromptNodeMeta(node) ?? {};
   const included = meta.included === true;
   const kind: PromptNodeKind = meta.kind ?? 'decision';
-  const origin = meta.origin ?? 'ai';
   const isRoot = promptRoot || isPromptRoot(node);
   const isExplain = kind === 'explain';
   const isFact = kind === 'fact';
@@ -215,14 +200,6 @@ function PromptNode({ data }: PromptNodeProps) {
     !meta.done &&
     proposalChildCount < optionCount;
 
-  const badge = isRoot
-    ? null
-    : kind === 'decision'
-      ? origin === 'user'
-        ? { label: '我的补充', className: 'text-amber-600 bg-amber-50', icon: <StickyNote size={9} /> }
-        : KIND_BADGE.decision
-      : KIND_BADGE[kind];
-
   const shownContent = streamingContent || node.content;
 
   return (
@@ -244,6 +221,52 @@ function PromptNode({ data }: PromptNodeProps) {
     >
       <Handle type="target" position={Position.Top} className="!top-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
 
+      {/*
+        悬停工具栏：所有操作集中在这里，卡片正文保持干净。
+        浮在卡片上沿之外，不占正文版面。
+      */}
+      <div className="absolute -top-3 right-2 z-10 hidden items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1 py-0.5 shadow-sm group-hover/node:flex">
+        {busy ? (
+          <span className="p-1 text-gray-400">
+            <Loader2 size={13} className="animate-spin" />
+          </span>
+        ) : canExpand ? (
+          <ToolbarButton title="细分" onClick={handleExpand}>
+            <Sparkles size={13} />
+          </ToolbarButton>
+        ) : canReplenish ? (
+          <ToolbarButton title="再想几个" onClick={handleExpand}>
+            <Wand2 size={13} />
+          </ToolbarButton>
+        ) : null}
+
+        {!isFact && (
+          <ToolbarButton title="分叉" onClick={handleAddChild}>
+            <GitBranch size={13} />
+          </ToolbarButton>
+        )}
+        {!isFact && !isEditing && (
+          <ToolbarButton title="编辑" onClick={handleEdit}>
+            <Pencil size={12} />
+          </ToolbarButton>
+        )}
+        {!isRoot && (
+          <ToolbarButton title="删除" onClick={handleDelete} danger>
+            <X size={13} />
+          </ToolbarButton>
+        )}
+      </div>
+
+      {/*
+        why 是次要信息：默认不出现，hover 时浮在卡片下方。
+        用绝对定位而不是插进正文，避免 hover 改变节点高度导致整棵树重排。
+      */}
+      {!isRoot && meta.why && (
+        <div className="pointer-events-none absolute left-0 right-0 top-full z-10 mt-1.5 hidden rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] leading-snug text-gray-500 shadow-sm group-hover/node:block">
+          {meta.why}
+        </div>
+      )}
+
       <div className="flex items-start gap-2">
         {!isRoot && (
           <button
@@ -263,24 +286,6 @@ function PromptNode({ data }: PromptNodeProps) {
         )}
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            {isRoot ? (
-              <span className="text-[10px] font-medium tracking-wide text-leaf-600">PROMPT 议题</span>
-            ) : (
-              badge && (
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium',
-                    badge.className
-                  )}
-                >
-                  {badge.icon}
-                  {badge.label}
-                </span>
-              )
-            )}
-          </div>
-
           {isEditing ? (
             <div
               /*
@@ -305,108 +310,64 @@ function PromptNode({ data }: PromptNodeProps) {
                 }
               }}
               onDoubleClick={(e) => e.stopPropagation()}
-              className="mt-0.5 outline-none min-h-[40px] text-sm leading-snug text-gray-800 prose prose-sm max-w-none"
+              className="min-h-[40px] outline-none text-sm leading-snug text-gray-800 prose prose-sm max-w-none"
               suppressContentEditableWarning
             />
           ) : (
             <div
               key="prompt-view"
               className={cn(
-                'mt-0.5 text-sm leading-snug break-words',
+                'text-sm leading-snug break-words',
                 isRoot ? 'font-semibold text-gray-800' : 'text-gray-800'
               )}
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 setEditingNode(node.id);
               }}
-              title="双击编辑"
             >
               {shownContent.trim() ? (
                 <div className="prose prose-sm max-w-none break-words">
                   <MarkdownText>{shownContent}</MarkdownText>
                 </div>
-              ) : (
-                <span className="text-gray-300">（未命名，双击编辑）</span>
-              )}
+              ) : null}
             </div>
           )}
-
-          {!isRoot && meta.why && <p className="mt-1 text-[11px] leading-snug text-gray-400 break-words">{meta.why}</p>}
         </div>
-
-        {!isRoot && !isFact && (
-          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/node:opacity-100">
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleEdit}
-              title="编辑"
-              className="p-0.5 rounded text-gray-300 hover:text-leaf-600 hover:bg-gray-100"
-            >
-              <Pencil size={11} />
-            </button>
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleDelete}
-              title="删除这一项"
-              className="p-0.5 rounded text-gray-300 hover:text-red-500 hover:bg-gray-100"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
       </div>
-
-      {!isFact && (
-        <div className="mt-2 flex items-center gap-1.5">
-          {busy ? (
-            <span className="flex items-center gap-1 text-[11px] text-gray-400">
-              <Loader2 size={12} className="animate-spin" /> 发散中…
-            </span>
-          ) : canExpand ? (
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleExpand}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md bg-leaf-50 text-leaf-700 hover:bg-leaf-100 transition-colors"
-            >
-              <Sparkles size={11} /> 细分
-            </button>
-          ) : canReplenish ? (
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleExpand}
-              title="再想几个"
-              className="p-1 rounded-md text-leaf-600 hover:bg-leaf-50 transition-colors"
-            >
-              <Wand2 size={13} />
-            </button>
-          ) : isExplain ? (
-            <span className="text-[11px] text-slate-400">解释默认不进入成稿</span>
-          ) : meta.done ? (
-            <span className="text-[11px] text-gray-300">已足够具体</span>
-          ) : meta.expanded ? (
-            <span className="text-[11px] text-gray-300">已细分 {proposalChildCount} 项</span>
-          ) : null}
-
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={handleAddChild}
-            title="手动添加一个子节点"
-            className="p-1 rounded-md text-gray-400 hover:text-leaf-600 hover:bg-gray-100 transition-colors"
-          >
-            <Plus size={12} />
-          </button>
-        </div>
-      )}
 
       {isEditing && <SelectionToolbar editorRef={editRef} />}
 
       <Handle type="source" position={Position.Bottom} className="!bottom-0 !left-1/2 !-translate-x-1/2 !w-2 !h-2 opacity-0" />
     </div>
+  );
+}
+
+function ToolbarButton({
+  title,
+  onClick,
+  danger = false,
+  children,
+}: {
+  title: string;
+  onClick: (e: React.MouseEvent) => void;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'p-1 rounded-md transition-colors',
+        danger
+          ? 'text-gray-400 hover:text-red-500 hover:bg-red-50'
+          : 'text-gray-500 hover:text-leaf-700 hover:bg-leaf-50'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

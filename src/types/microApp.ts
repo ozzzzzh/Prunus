@@ -12,8 +12,13 @@
 
 import type { PrunusNode } from './node';
 
-/** 已实现的微应用。加第二个时这里加一项，下面的联合类型会自动跟上 */
-export type MicroAppId = 'pdf';
+/**
+ * 已实现的微应用。
+ *
+ * - `pdf`：Paper 阅读器（原文选区 → 画布节点）
+ * - `prompt`：Prompt 工作台（LLM 发散 + 用户勾选，把模糊议题收敛成一棵决策树）
+ */
+export type MicroAppId = 'pdf' | 'prompt';
 
 /**
  * 微应用面板根节点的标记属性。
@@ -114,8 +119,110 @@ export interface PdfTranslation {
   createdAt: number;
 }
 
+// ===== Prunus Prompt（提示词工作台）=====
+
+/**
+ * Prompt 微应用在某个会话上的状态。
+ *
+ * 树本身**不在这里** —— 它就是会话里的节点，靠节点 metadata 上的
+ * `promptNode` 标记识别。这里只放"整棵树共用"的少量设置，
+ * 这样勾选、细分、删除全部走 sessionStore，撤销与持久化都是现成的。
+ */
+export interface PromptMicroAppState {
+  /** 每次发散提供几个选项（2–6，默认 3）。删除后可按这个数补齐 */
+  optionCount: number;
+  /** 最近一次「生成成稿」的结果（Markdown） */
+  artifact?: string;
+  artifactAt?: number;
+  /** 生成时的勾选指纹：与当前指纹不一致 = 清单变了，建议重新生成 */
+  artifactFingerprint?: string;
+}
+
+/** Prompt 节点的语义类型 */
+export type PromptNodeKind = 'decision' | 'draft' | 'fact' | 'explain' | 'note';
+/** 节点是谁写的 */
+export type PromptNodeOrigin = 'ai' | 'user';
+
+const PROMPT_KINDS: PromptNodeKind[] = ['decision', 'draft', 'fact', 'explain', 'note'];
+
+/**
+ * 一个 Prompt 节点上的标记。
+ *
+ * 节点类型仍是 `ai-chat`：Prompt **复用主应用的 MessageNode**（编辑 / 分叉 /
+ * 收起 / 标记 / 缩放都是同一套），prompt 专属的只有勾选与「细分」，由 metadata 驱动。
+ *
+ * 两个状态必须分开：
+ * - `expanded`：这一支往下展开过（LLM 细分 / 追问 / 手动加子节点）
+ * - `included`：这一条要进入最终成稿
+ * 展开不要求先勾选，勾选也不要求先展开。
+ */
+export interface PromptNodeMeta {
+  /** 是否纳入最终成稿。默认 false（AI 提议不替用户做决定） */
+  included?: boolean;
+  /** @deprecated 旧字段；读取时回退为 included，新写入不再使用 */
+  selected?: boolean;
+  /** 节点类型：决策 / 候选稿 / 事实 / 解释 / 笔记 */
+  kind?: PromptNodeKind;
+  /** 来源：AI 提议还是用户手写 */
+  origin?: PromptNodeOrigin;
+  /** LLM 给出的一句话理由：定这一项会影响什么 */
+  why?: string;
+  /** 同一批发散的批次 id，用于补齐时去重与识别 */
+  batchId?: string;
+  /** 已经发散过（避免重复请求） */
+  expanded?: boolean;
+  /** LLM 判断这一项已经足够具体，继续拆分没有价值 */
+  done?: boolean;
+}
+
+export const PROMPT_NODE_KEY = 'promptNode';
+/** 会话根节点上的标记：这个节点是 Prompt 里的"议题" */
+export const PROMPT_ROOT_KEY = 'promptRoot';
+
+/**
+ * 安全取出 Prompt 节点标记。
+ *
+ * 与 getNodeAttachment 同一套守卫理由：metadata 的内容可能来自导入的 JSON，
+ * 脏数据只该让这个节点少一个样式，不该让整个画布渲染崩掉。
+ */
+export function getPromptNodeMeta(node: PrunusNode): PromptNodeMeta | null {
+  const raw = node.metadata?.[PROMPT_NODE_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+
+  const meta = raw as Record<string, unknown>;
+  const kind = meta.kind as PromptNodeKind | undefined;
+  const origin = meta.origin as PromptNodeOrigin | undefined;
+
+  return {
+    // 旧数据只有 selected：读的时候当成 included，老 Prompt 会话不用迁移
+    included: meta.included === true || meta.selected === true,
+    kind: kind && PROMPT_KINDS.includes(kind) ? kind : 'decision',
+    origin: origin === 'user' ? 'user' : 'ai',
+    why: typeof meta.why === 'string' ? meta.why : undefined,
+    batchId: typeof meta.batchId === 'string' ? meta.batchId : undefined,
+    expanded: meta.expanded === true,
+    done: meta.done === true,
+  };
+}
+
+/** 这一项是不是"LLM 提议的决策/候选稿"（补齐计数只看这一类） */
+export function isPromptProposal(meta: PromptNodeMeta | null): boolean {
+  return meta !== null && (meta.kind === 'decision' || meta.kind === 'draft');
+}
+
+/** 这个节点是不是 Prompt 的议题根 */
+export function isPromptRoot(node: PrunusNode): boolean {
+  return node.metadata?.[PROMPT_ROOT_KEY] === true;
+}
+
+/** 这个会话是不是 Prompt 会话（微应用状态存在即算） */
+export function isPromptSession(microApps: SessionMicroApps | undefined): boolean {
+  return Boolean(microApps?.prompt);
+}
+
 export interface SessionMicroApps {
   pdf?: PdfMicroAppState;
+  prompt?: PromptMicroAppState;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   Move,
   HelpCircle,
   Download,
+  Sparkles,
 } from 'lucide-react';
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -28,6 +29,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import { serializeSession, sessionTitleToFileName } from '../../utils/sessionTransfer';
+import { createPromptSession } from '../../utils/promptSession';
 import type { TreeNode, FolderItem } from '../../types';
 import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
@@ -57,6 +59,8 @@ export default function Sidebar() {
   const switchSession = useSessionStore((state) => state.switchSession);
   const createSession = useSessionStore((state) => state.createSession);
   const deleteSession = useSessionStore((state) => state.deleteSession);
+  /** 仅用于区分 Prompt 会话的图标（微应用状态挂在会话上） */
+  const sessionsMap = useSessionStore((state) => state.sessions);
 
   const toggleSettings = useUIStore((state) => state.toggleSettings);
   const toggleHelp = useUIStore((state) => state.toggleHelp);
@@ -92,6 +96,11 @@ export default function Sidebar() {
     createSessionItem(parentId, sessionId, session?.title || '新对话文件');
     switchSession(sessionId);
   }, [createSession, createSessionItem, switchSession]);
+
+  // 新建 Prompt 会话（创建、放进文件夹、切页、打开微应用都在这个工具函数里）
+  const handleCreatePrompt = useCallback((parentId: string | null) => {
+    createPromptSession(parentId);
+  }, []);
 
   // 重命名
   const handleRename = useCallback((itemId: string) => {
@@ -270,6 +279,12 @@ export default function Sidebar() {
                   )}
                 />
               )
+            ) : node.sessionId && sessionsMap[node.sessionId]?.microApps?.prompt ? (
+              // Prompt 会话是"另一种会话"，给它一个能一眼认出来的图标
+              <Sparkles
+                size={16}
+                className={cn('flex-shrink-0', isActive ? 'text-leaf-600' : 'text-leaf-400')}
+              />
             ) : (
               <MessageSquare
                 size={16}
@@ -434,6 +449,7 @@ export default function Sidebar() {
           onTogglePin={() => handleTogglePin(contextMenu.itemId!)}
           onCreateFolder={() => handleCreateFolder(contextMenu.itemId!)}
           onCreateSession={() => handleCreateSession(contextMenu.itemId!)}
+          onCreatePrompt={() => handleCreatePrompt(contextMenu.itemId!)}
         />
       )}
 
@@ -445,6 +461,7 @@ export default function Sidebar() {
           onClose={closeContextMenu}
           onCreateFolder={() => handleCreateFolder(null)}
           onCreateSession={() => handleCreateSession(null)}
+          onCreatePrompt={() => handleCreatePrompt(null)}
         />
       )}
 
@@ -474,6 +491,7 @@ function ContextMenu({
   onTogglePin,
   onCreateFolder,
   onCreateSession,
+  onCreatePrompt,
 }: {
   x: number;
   y: number;
@@ -486,6 +504,7 @@ function ContextMenu({
   onTogglePin?: () => void;
   onCreateFolder?: () => void;
   onCreateSession?: () => void;
+  onCreatePrompt?: () => void;
 }) {
   return (
     <div
@@ -512,6 +531,15 @@ function ContextMenu({
             >
               <MessageSquare size={14} />
               新建对话文件
+            </button>
+          )}
+          {onCreatePrompt && (
+            <button
+              onClick={() => { onCreatePrompt(); onClose(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <Sparkles size={14} />
+              新建 Prompt
             </button>
           )}
           <div className="border-t border-gray-100 my-1" />
@@ -589,6 +617,15 @@ function ContextMenu({
             >
               <Plus size={14} />
               新建对话文件
+            </button>
+          )}
+          {onCreatePrompt && (
+            <button
+              onClick={() => { onCreatePrompt(); onClose(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <Sparkles size={14} />
+              新建 Prompt
             </button>
           )}
         </>

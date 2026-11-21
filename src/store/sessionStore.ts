@@ -14,8 +14,9 @@ import type {
   SessionMicroApps,
   MicroAppId,
   PdfMicroAppState,
+  PromptNodeMeta,
 } from '../types';
-import { ATTACHMENT_KEY, IMAGE_REF_KEY } from '../types';
+import { ATTACHMENT_KEY, IMAGE_REF_KEY, PROMPT_NODE_KEY, getPromptNodeMeta } from '../types';
 import { createAIChatNode, createRootNode, migrateNode, type LegacyNode, type LegacySession } from '../utils/migration';
 import { useHistoryStore } from './historyStore';
 
@@ -59,6 +60,21 @@ interface SessionState {
     app: K,
     next: SessionMicroApps[K] | null
   ) => void;
+
+  // ===== Prunus Prompt（微应用）=====
+  /**
+   * 给某个节点批量挂上 Prompt 发散结果。
+   * 新节点默认未勾选、带 why 与批次 id；整批算一步撤销。
+   */
+  addPromptProposals: (params: {
+    /** 显式传会话 id：LLM 请求是异步的，期间用户可能切走，不能依赖 activeSessionId */
+    sessionId: string;
+    parentId: string;
+    items: { title: string; why: string; kind?: 'decision' | 'draft' }[];
+    batchId: string;
+  }) => string[];
+  /** 更新 Prompt 节点标记（纳入 / 展开 / 类型 / 已足够具体） */
+  setPromptNodeMeta: (sessionId: string, nodeId: string, patch: Partial<PromptNodeMeta>) => void;
 
   // 节点操作
   addMessage: (role: 'user' | 'assistant' | 'system', content: string, parentId?: string) => string;
@@ -441,6 +457,114 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           // 刻意不更新 updatedAt：读了几页不算"会话有改动"，
           // 否则文件管理页按时间排序时会因为阅读而把对话顶到最前面
           [sessionId]: { ...session, microApps },
+        },
+      };
+    });
+  },
+
+  /**
+   * 给某个节点批量挂上 Prompt 发散结果。
+   *
+   * 与 addBranchedMessages 的区别：这些节点默认**未勾选**、带 why 与批次 id，
+   * 而且宽度固定成窄卡（Prompt 树一层三个，480px 会把画布撑得很宽）。
+   * 一步撤销，且**不移动 currentNodeId** —— 镜头停在父节点上，用户才看得到新长出来的分支。
+   */
+  addPromptProposals: ({ sessionId, parentId, items, batchId }) => {
+    if (items.length === 0) return [];
+
+    // 显式会话必须有历史，而不是 activeSessionId 的那一份
+    const before = get().sessions[sessionId];
+    if (before) useHistoryStore.getState().push(sessionId, before);
+
+    const created: string[] = [];
+
+    set((state) => {
+      const session = state.sessions[sessionId];
+      const parent = session?.nodes[parentId];
+      if (!session || !parent) return state;
+
+      const nodes = { ...session.nodes };
+      const childIds: string[] = [];
+
+      items.forEach((item) => {
+        const id = generateId();
+        const node = createAIChatNode({
+          id,
+          parentId,
+          role: 'assistant',
+          content: item.title,
+          // 有 marker 才有"收起/标记"这套原生能力（Prompt 复用 MessageNode）
+          marker: '🍃',
+        });
+        node.metadata = {
+          [PROMPT_NODE_KEY]: {
+            included: false,
+            kind: item.kind ?? 'decision',
+            origin: 'ai',
+            why: item.why,
+            batchId,
+          } satisfies PromptNodeMeta,
+        };
+        nodes[id] = node;
+        childIds.push(id);
+        created.push(id);
+      });
+
+      const parentMeta = getPromptNodeMeta(parent) ?? {};
+      nodes[parentId] = {
+        ...parent,
+        childrenIds: [...parent.childrenIds, ...childIds],
+        // 与 insertChildNode 同一套标记升级：叶子长出分叉就变成树干
+        marker: parent.marker === '🍃' ? '🪵' : parent.marker,
+        metadata: {
+          ...(parent.metadata ?? {}),
+          [PROMPT_NODE_KEY]: { ...parentMeta, expanded: true, done: false } satisfies PromptNodeMeta,
+        },
+        updatedAt: Date.now(),
+      };
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...session, nodes, updatedAt: Date.now() },
+        },
+      };
+    });
+
+    return created;
+  },
+
+  setPromptNodeMeta: (sessionId, nodeId, patch) => {
+    const session = get().sessions[sessionId];
+    const node = session?.nodes[nodeId];
+    if (!session || !node) return;
+
+    useHistoryStore.getState().push(sessionId, session);
+
+    set((state) => {
+      const currentSession = state.sessions[sessionId];
+      const current = currentSession?.nodes[nodeId];
+      if (!currentSession || !current) return state;
+
+      const merged: PromptNodeMeta = { ...(getPromptNodeMeta(current) ?? {}), ...patch };
+
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...currentSession,
+            nodes: {
+              ...currentSession.nodes,
+              [nodeId]: {
+                ...current,
+                metadata: { ...(current.metadata ?? {}), [PROMPT_NODE_KEY]: merged },
+                updatedAt: Date.now(),
+              },
+            },
+            updatedAt: Date.now(),
+          },
         },
       };
     });

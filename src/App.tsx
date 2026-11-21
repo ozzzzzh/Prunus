@@ -121,6 +121,31 @@ function App() {
     document.documentElement.style.setProperty('--micro-app-w', `${microAppWidth}px`);
   }, [microAppWidth]);
 
+  /**
+   * 切到 Prompt 会话时自动打开工作台。
+   *
+   * `activeMicroApp` 刻意不持久化（每次启动都关着面板）。如果不补这一步，
+   * 刷新后 Prompt 会话看上去和普通画布一样：输入框在、节点长得像聊天卡片。
+   * 只在"当前没有打开任何微应用"时接管，用户手动关掉面板后不会再被弹出来。
+   */
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    const session = useSessionStore.getState().sessions[activeSessionId];
+    const active = useUIStore.getState().activeMicroApp;
+
+    if (session?.microApps?.prompt) {
+      if (!active) useUIStore.getState().setActiveMicroApp('prompt');
+      return;
+    }
+
+    // 切到普通会话：Prompt 工作台对这个会话没有意义。不收起来的话，
+    // 聊天输入框会一直隐藏（它是按 activeMicroApp 判断的），用户会以为功能坏了。
+    if (active === 'prompt') {
+      useUIStore.getState().setActiveMicroApp(null);
+    }
+  }, [activeSessionId]);
+
   // 获取当前会话所在的文件夹路径（面包屑）
   const breadcrumbs = useMemo(() => {
     if (!activeSessionId) return [{ id: null, name: '根目录' }];
@@ -273,6 +298,11 @@ function App() {
             {expandedNodeId ? <ExpandedView /> : <ChatCanvas />}
           </ReactFlowProvider>
         </div>
+        {/*
+          Prompt 会话也保留底部聊天框：它现在承担"追问概念"的职责。
+          追问产生的问答节点会被标成 explain（见 ChatInput 的 tagPromptChatNode），
+          默认不进入成稿，只在左侧归到「知识笔记」。
+        */}
         <ChatInput />
       </main>
 

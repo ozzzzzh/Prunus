@@ -15,6 +15,7 @@ import { getLocalImage, blobToDataUrl } from '../../utils/imageStore';
 import { parseDocument, estimateTokens, LARGE_DOC_TOKENS } from '../../utils/documentParser';
 import ImageLightbox from '../common/ImageLightbox';
 import { htmlToPlainText } from '../../utils/richtext';
+import { tagPromptChatNode } from '../../utils/promptSession';
 
 export default function ChatInput() {
   const [input, setInput] = useState('');
@@ -38,6 +39,8 @@ export default function ChatInput() {
 
   const session = activeSessionId ? sessions[activeSessionId] : null;
   const activeNode = session && session.currentNodeId ? session.nodes[session.currentNodeId] : null;
+  /** Prompt 会话里，聊天被用作"追问概念"；输入提示要说明这一点 */
+  const isPromptSession = Boolean(session?.microApps?.prompt);
 
   // ===== 上传文档 =====
   // 附件先挂在这里，等发送时节点建出来了再写进那个节点的 metadata ——
@@ -96,6 +99,9 @@ export default function ChatInput() {
     clearImageDraft();
 
     const userNodeId = addMessage('user', messageContent);
+
+    // Prompt 会话里，问答是"追问概念"，标记成 explain：默认不进成稿，但可勾选成备注
+    if (activeSessionId) tagPromptChatNode(activeSessionId, userNodeId, 'user');
 
     // 附件/截图写进刚建出来的这个用户节点。刻意不塞进 content ——
     // content 保持是用户手打的那句话，这些走 metadata，卡片上才显示得干净。
@@ -220,6 +226,7 @@ export default function ChatInput() {
 
       // 先创建空的 assistant 节点
       const aiNodeId = useSessionStore.getState().addMessage('assistant', '', userNodeId);
+      tagPromptChatNode(activeSessionId, aiNodeId, 'assistant');
 
       // 更新展开节点ID（如果在展开模式）
       if (expandedNodeId) {
@@ -453,7 +460,11 @@ export default function ChatInput() {
                     setTimeout(() => handleSubmit(), 0);
                   }
                 }}
-                placeholder="Type your message here... (Shift+Enter for new line)"
+                placeholder={
+                  isPromptSession
+                    ? '追问概念，或补充说明…（Shift+Enter 换行）'
+                    : 'Type your message here... (Shift+Enter for new line)'
+                }
                 className="flex-1 max-h-40 min-h-[44px] bg-transparent resize-none outline-none py-3 px-3 text-sm text-gray-900 placeholder:text-gray-400 custom-scrollbar"
                 rows={1}
               />

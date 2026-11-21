@@ -20,6 +20,7 @@ import {
   Home,
   Pin,
   Upload,
+  Sparkles,
 } from 'lucide-react';
 import { useFolderStore } from '../../store/folderStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -27,6 +28,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useDialogStore } from '../../store/dialogStore';
 import { cn } from '../../utils/cn';
 import { parseSessionFile, resolveImport } from '../../utils/sessionTransfer';
+import { createPromptSession } from '../../utils/promptSession';
 import type { FolderItem } from '../../types';
 import logo from '../../assets/PrunusLogoHighQuality.jpg';
 
@@ -119,6 +121,15 @@ export default function FileManagerPage() {
     const session = useSessionStore.getState().sessions[sessionId];
     createSessionItem(currentFolderId, sessionId, session?.title || '新对话文件');
   };
+
+  // 新建 Prompt 会话（微应用会话，根节点当议题用）
+  const handleCreatePrompt = () => {
+    createPromptSession(currentFolderId);
+  };
+
+  /** Prompt 会话有自己的一套图标，否则在文件列表里和普通对话长得一模一样 */
+  const isPromptSession = (item: Pick<FolderItem, 'type' | 'sessionId'>) =>
+    item.type === 'session' && Boolean(item.sessionId && sessions[item.sessionId]?.microApps?.prompt);
 
   // 加载示例数据
   const handleLoadExample = () => {
@@ -282,6 +293,14 @@ export default function FileManagerPage() {
             >
               <Upload size={18} />
               <span>导入对话</span>
+            </button>
+            <button
+              onClick={handleCreatePrompt}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-leaf-700 bg-leaf-50 hover:bg-leaf-100 border border-leaf-200 rounded-lg transition-colors"
+              title="用一棵决策树把模糊想法收敛成具体提示词"
+            >
+              <Sparkles size={18} />
+              <span>新建 Prompt</span>
             </button>
             <button
               data-tour="create-session-btn"
@@ -459,6 +478,8 @@ export default function FileManagerPage() {
                       <div className="flex items-center gap-3">
                         {item.type === 'folder' ? (
                           <Folder size={18} className="text-gray-400" />
+                        ) : isPromptSession(item) ? (
+                          <Sparkles size={18} className="text-leaf-500" />
                         ) : (
                           <MessageSquare size={18} className="text-gray-400" />
                         )}
@@ -524,6 +545,8 @@ export default function FileManagerPage() {
                 <div className="mb-3">
                   {item.type === 'folder' ? (
                     <Folder size={48} className="text-gray-400" strokeWidth={1.5} />
+                  ) : isPromptSession(item) ? (
+                    <Sparkles size={48} className="text-leaf-500" strokeWidth={1.5} />
                   ) : (
                     <MessageSquare size={48} className="text-gray-400" strokeWidth={1.5} />
                   )}
@@ -579,6 +602,16 @@ export default function FileManagerPage() {
                 >
                   <Plus size={14} />
                   新建对话文件
+                </button>
+                <button
+                  onClick={() => {
+                    handleCreatePrompt();
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Sparkles size={14} />
+                  新建 Prompt
                 </button>
               </>
             )}

@@ -203,6 +203,7 @@ folders 同理。而 `enableAutoSave()` 订阅 sessionStore / apiConfigStore / f
 | **引导** | **15 步**动作校验式交互式引导（靠订阅 store 检测真实操作来推进）、欢迎页、情境提示、帮助面板 | `components/onboarding/` |
 | **PDF 微应用** | 打开 PDF、选原文建节点（可挂到当前节点或根节点）、**多色记号笔（只标注不建节点）**、**涂改液式翻译（白块盖住原文显示中文译文）**、按住 Ctrl 点击"已建节点"的记号跳回节点、缩放（Ctrl/Cmd+滚轮）、页码记忆、跨页跳转、扫描件提示 | `components/microapps/pdf/` |
 | **截图问答** | PDF 顶栏相机按钮 → 拖框选区 → 缩略图进入输入框 → 发送时挂到该条消息的节点 → 走**视觉模型**就图对话。图片存独立 IndexedDB 表，节点只存引用 + 小缩略图 | `PdfPanel` / `ChatInput` / `imageStore` |
+| **Prompt 工作台** | 独立 Prompt 会话：输入议题 → LLM 每次发散 2–6 项（默认 3，优先给**可粘贴的候选稿**）→ 用户勾选「纳入成稿」（默认不选，但**展开不要求先勾选**）→ 逐层细分 / 编辑 / **编辑态选中文字后复制或移动摘取来分叉** / 用底部聊天框**追问概念**。画布节点**复用 MessageNode**（编辑、收起、标记、缩放同一套）；why 集成在节点内、分隔线划区、单行可展开。左侧实时清单按 事实 / 已纳入 / 知识笔记 / 待具体化 分组；点「生成成稿」直接切到成稿视图：按 PRD 章节纪律组织，按领域与读者决定详略，推断项标 `（推断）`，末尾 `## 假设与待确认`，清单变化后提示过期。**没有产物类型选择**，网页/图片/视频共用一套槽位 | `components/microapps/prompt/` + `utils/prompt*` |
 | **设置** | 深度思考开关；CDK 模式显示剩余额度，BYOK 模式编辑协议/模型/Base URL/Key | `SettingsModal` |
 
 **交互式引导的 15 步**（`types/tour.ts`）：`welcome-filemanager` → `open-session` → `welcome-canvas` →
@@ -303,11 +304,13 @@ Vite 按对象键的**插入顺序**匹配，`/api/` 在前会吞掉另外两个
    选区塌陷，格式会作用到空选区。
 3. **`selectionchange` 是全局事件**，必须用 `editorRef.current.contains(...)` 过滤，
    否则在 PDF 文本层里选字也会弹出格式条。
+
 4. **只在选区定稿后显示，不要在拖选过程中定位**。`selectionchange` 在拖选时每个字符
    都会触发，在那里 setAnchor 会让工具条从按下鼠标起一路跟着光标飞、挡住视线。
    现在的生命周期是：`pointerdown` 收起 → `pointerup` / `keyup` 定稿后显示；
    `selectionchange` 只负责"选区塌陷或跑到编辑器外时收起"，绝不负责定位。
    双击选词另有 `dblclick` 补一帧（浏览器可能在 pointerup 之后才最终定下选区）。
+
 
 另外：底部那套 `FormatToolbar` **已删除**（连同 `chat/FormatToolbar.tsx`），
 编辑工具现在只有浮条一个入口。右键菜单里的摘取暂时保留，与浮条并存。
@@ -385,6 +388,52 @@ PDF 页面是位图，不能回流 —— 译文只能覆盖，不可能把下�
 必须把**白底矩形一起撤掉**，否则露出来的是一块白。删除才算一次编辑。
 译文里允许 `**加粗**`（提示词第 7 条），渲染层解析成 `<strong>`，不解析任何 HTML。
 翻译调用复用主聊天模型（`utils/translate.ts`），**没有独立配置项**。
+
+### 4.14 Prompt 复用 MessageNode，不要另造节点组件
+
+Prompt 树就是 Prunus 的树：用户要的是同一套**编辑、选中分叉、收起、标记、缩放**，
+所以画布节点始终是 `MessageNode`；prompt 专属的只有勾选与「细分 / 再想几个」，
+由 metadata 驱动。不要再引入 `PromptNode` 或 `loadNodeTypes` 那套平行渲染。
+
+几条不能破的：
+
+1. **画布只有 `message` 一种节点**。Prompt 通过 `getPromptNodeMeta` / `isPromptRoot`
+   在 `MessageNode` 里加薄薄一层 chrome（勾选框、细分按钮、why 区块）。
+2. **分叉 = 编辑态选中文字 → 复制/移动摘取**。复用现有 SelectionToolbar 与兄弟节点逻辑；
+   `handleExtractCopy/Cut` 会把新兄弟节点标成 `kind:'note'`、`origin:'user'`、`included:true`。
+   不要为"添加子节点"另加 `+` 按钮。
+3. **Prompt 提议必须带 marker（🍃）**：收起/标记按钮只在有 marker 时出现；
+   不要覆盖宽度，沿用 MessageNode 的默认 480。
+4. **Prompt 的 LLM 请求必须显式传 `sessionId`**：请求是异步的，期间用户可能切会话；
+   `addPromptProposals` / `setPromptNodeMeta` 都不读 `activeSessionId`。
+5. **勾选 = 纳入成稿，展开与勾选解耦**：任何节点都能细分/追问/编辑，勾选只影响成稿。
+   AI 提议默认不纳入，用户手写默认纳入，解释默认不纳入。
+6. **底部聊天框在 Prompt 会话里保留**，承担"追问概念"。
+   `ChatInput` 新建的问答节点由 `tagPromptChatNode` 标成 `kind:'explain'`、`included:false`，
+   所以天然不进成稿；勾选后进入「知识笔记」。
+7. **成稿只读 `included`**，事实原样保留，缺失事实写 `[待确认]`；推断项必须标 `（推断）`
+   并以 `## 假设与待确认` 收尾。清单指纹用于判断成稿是否过期。
+8. **所有展示/成稿内容走 `htmlToPlainText`**：编辑后节点内容是 HTML，直接拼进提示词会带标签。
+9. **UI**：why 集成在节点内（分隔线 + 单行 + 展开/收起），不用 hover 浮层；
+   不放类型/来源/状态小标签；操作放 header 图标工具栏。
+
+### 4.15 UI 基调：整洁、大气、少提示（**优先于局部设计**）
+
+完整规则见 `ARCHITECTURE.md` §1.4，做任何前端/组件之前先读。三条最常被违反的：
+
+1. **节点只放内容与勾选**。不要加「候选稿」「AI 建议」「我的补充」「已细分 N 项」
+   「解释」「默认不进入成稿」这类小标签或小字。状态用勾选/虚线/颜色表达。
+2. **次要信息（why/说明）集成在节点内，有边界且可缩略**。用分隔线/浅底划出独立区块，
+   默认只显示一行（`line-clamp-1`），用图标展开/收起。**不要用 hover 浮层** ——
+   它会和树结构、连线重叠。
+3. **操作集中在节点 header 的图标工具栏**（细分 / 编辑 / 删除 / 标记等，
+   分叉走编辑态的选中摘取），随节点激活显示；不要在卡片下方为零散动作加按钮。
+4. **图标优先**：操作入口用 lucide 图标，需要文字时「图标 + 短文字」并排，
+   避免纯文字按钮/状态标签；icon-only 必须有 `title`（必要时 `aria-label`），
+   同一操作全应用统一图标。
+
+Prompt 的节点（`MessageNode` + prompt metadata）是参考实现；新增 UI 时对照它，
+不要另起一套。
 
 ---
 

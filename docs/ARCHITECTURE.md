@@ -518,13 +518,16 @@ flowchart LR
 flowchart TD
   A["双击节点"] --> B["Markdown → HTML 载入 contentEditable"]
   B --> C["选中文字"]
-  C --> D["浮动工具条 SelectionToolbar<br/>Portal 到 body，贴着选区上方"]
+  C --> D["浮动工具条 SelectionToolbar<br/>松手后才出现，贴着选区上方"]
   D --> E1["格式：粗/斜/下划线/删除线/字色/高亮"]
   D --> E2["摘取：复制 / 移动为兄弟节点"]
   B --> F["失焦"] --> G["updateNodeContent<br/>（摘录节点同时清掉 pdfQuote 标记）"]
 ```
 
 - 浮条只依赖 `Selection`/`Range`，编辑态与展开视图（`ExpandedView`）共用同一个组件。
+- **出现的时机是"选区定稿"而不是"选区开始"**：`pointerdown` 收起 → `pointerup`/`keyup` 显示；
+  `selectionchange` 只用于"选区塌陷或跑出编辑器时收起"。拖选过程中不定位，
+  否则工具条会跟着光标一路飞。
 - 摘取会**改写源节点内容并创建兄弟节点**，属于两次写入，必须与节点操作一起被撤销合并（§5.3）。
 - 右键菜单仍保留摘取入口（与浮条并存），但主路径是浮条。
 

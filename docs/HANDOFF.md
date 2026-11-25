@@ -555,6 +555,7 @@ npm run preview  # 预览构建产物
 | `ARCHITECTURE.md` | 架构全貌：分层、数据模型、持久化、对话链路、**微应用（PDF）全套流程**，配架构图 / 流程图 / 时序图。§11 结构性约束、§12 技术债 | ✅ 会 |
 | `UI_UX_DESIGN_GUIDE.md` | 设计系统：`leaf` 色板与 hex、状态→class 映射、圆角/阴影/间距规范、组件规格、图标选择、**反模式**。做新 UI 前必读 | ✅ 会 |
 | `QUICKSTART.md` | PM2 后台运行速查（注意 §7.3 的路径问题） | ✅ 会 |
+| `DESKTOP_BUILD.md` | 桌面安装包（Tauri 2）：工具链前置、`src-tauri/` 配置逐项说明、Windows/macOS 构建、数据目录、验证清单、已知坑 | ✅ 会 |
 | `logoDesign.md` | 标志设计说明与 4 个方案提示词 | ✅ 会 |
 | `../README.md` | 对外介绍、快速开始、技术栈 | ✅ 会 |
 

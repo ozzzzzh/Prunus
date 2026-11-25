@@ -15,6 +15,25 @@ dist
 dist-ssr
 *.local
 
+# ============================================
+# 桌面端（Tauri）
+# ============================================
+# Rust 增量编译产物：一次 release 构建约 1.6 GB（debug 更大），
+# 里面全是 .rlib / .obj / 中间链产物，入库既没意义也会把仓库撑爆。
+src-tauri/target/
+
+# Tauri CLI 生成的权限 schema（src-tauri/gen/schemas/{desktop,windows}-schema.json、
+# acl-manifests.json、capabilities.json）。capabilities/*.json 里的 `$schema` 只是编辑器的
+# 补全提示，文件本身由 `tauri build`/`tauri dev` 自动重建 —— 官方模板同样是忽略的。
+src-tauri/gen/schemas/
+
+# 桌面端前端产物：base 是 /，与部署用的 dist/ 不能混用，混用必白屏
+dist-desktop/
+
+# 刻意**不**忽略 src-tauri/Cargo.lock：这是可执行程序（不是库），
+# 锁文件必须入库，否则不同机器上的间接依赖版本会漂移，链接期偶发报错无从复现。
+# src-tauri/icons/ 与 app-icon.png 是打包输入，同样必须入库。
+
 # pdf.js 侧载资源，由 scripts/copy-pdfjs-assets.mjs 从 node_modules 复制而来
 public/pdfjs
 

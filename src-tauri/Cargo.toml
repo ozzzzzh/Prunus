@@ -1,0 +1,42 @@
+[package]
+name = "prunus"
+version = "0.1.21"
+description = "Prunus — 树状对话管理器"
+authors = ["Prunus"]
+license = "Apache-2.0"
+repository = "https://github.com/ozzzzzh/Prunus"
+edition = "2021"
+# 必须 ≥ 1.90：tauri-plugin-http 2.9 的硬性要求（见 plugins-workspace 的 README）
+rust-version = "1.90"
+
+# 桌面端：三个 crate-type 都留着。
+# staticlib/cdylib 是给 Tauri 2 的移动端（iOS/Android）留的口子，
+# 现在用不上，删掉也不会影响 Windows/macOS，但留着将来接移动端不用改结构。
+[lib]
+name = "prunus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+# 版本与前端 @tauri-apps/cli / @tauri-apps/api 都锁在 2.x 同一代
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 关键依赖：跨域请求由 Rust 发出，绕开 WebView 的 CORS。
+# ⚠ 这个版本必须和 package.json 里 @tauri-apps/plugin-http 的**小版本对齐**：
+#   JS 客户端与 Rust 插件通过 IPC 约定传响应体，2.5.0 用 channel、2.5.7 改成
+#   每次 fetch_read_body 返回一块；错配的典型症状是「状态码和响应头到了，
+#   但 body 永远读不出来」——流式对话直接卡死，且不会报错。
+tauri-plugin-http = "2.9"
+
+# release 构建的体积/速度取舍（Tauri 官方推荐值）：
+# 桌面安装包主要成本是 WebView 资源与前端 bundle，Rust 侧开 LTO 换来的
+# 是更小的二进制和更少的崩溃面，编译时间换得起。
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

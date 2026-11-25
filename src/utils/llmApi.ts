@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { useAPIConfigStore, type LLMConnection } from '../store/apiConfigStore';
+import { appFetch, isDesktop, openAICompatibleFetch } from './desktop';
 
 // 检测是否是 Safari 浏览器
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -126,12 +127,25 @@ export async function generateAIResponse(
   }
 
   // OpenAI 协议：使用 OpenAI SDK
+  //
+  // 代理路径只在 Web 端存在（Vite dev server 的 /api/llm，见 vite.config.ts）。
+  // 桌面端没有 dev server，同源请求会落到 tauri.localhost 上，必须挡在发请求之前 ——
+  // 否则用户看到的是连接错误 + 一句让他去改 .env.local 的提示，而桌面端根本没有那个文件。
+  if (!hasBYOK && isDesktop()) {
+    throw new Error(
+      '桌面版需要自己填写 Base URL 和 API Key（桌面版没有本地代理，无法替你注入 Key）。请在设置里填入你的大模型服务。'
+    );
+  }
+  // 走到这里时，桌面端一定有 BYOK；代理分支只可能出现在 Web 端。
   const baseURL = hasBYOK ? byokBaseUrl : `${window.location.origin}/api/llm`;
-
   // BYOK 模式使用用户自己的 Key；代理模式下用占位符，实际 Key 由代理注入。
   const client = new OpenAI({
     apiKey: hasBYOK ? byokApiKey : 'proxy-placeholder',
     baseURL: baseURL,
+    // 桌面端把请求交给 Rust 发出：WebView 的 origin 是 tauri.localhost / tauri://localhost，
+    // 不在绝大多数 provider 的 CORS 白名单里，浏览器 fetch 会在预检阶段就被拒。
+    // Web 端传 undefined，SDK 回落到全局 fetch，行为与改造前一致。
+    fetch: isDesktop() ? openAICompatibleFetch : undefined,
     dangerouslyAllowBrowser: true,
     // 增加超时设置，防止请求一直挂起
     timeout: 60000,
@@ -255,7 +269,8 @@ async function generateAnthropicResponse(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    // appFetch：桌面端走 Rust 侧（绕开 tauri.localhost 的 CORS），Web 端就是原生 fetch
+    response = await appFetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

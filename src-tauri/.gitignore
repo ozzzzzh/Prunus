@@ -1,0 +1,10 @@
+# Rust 增量编译产物：一次 release 构建约 1.6 GB（debug 更大）
+/target/
+
+# Tauri CLI 生成的权限 schema（desktop-schema.json / windows-schema.json /
+# acl-manifests.json / capabilities.json）。capabilities/*.json 里的 `$schema`
+# 只是编辑器补全提示，这些文件由 `tauri build` / `tauri dev` 自动重建。
+#
+# 只忽略 gen/schemas 而不是整个 gen/：将来若接移动端，gen/android 里的
+# Android Studio 工程是**需要入库**的源文件，不能一起忽略掉。
+/gen/schemas/

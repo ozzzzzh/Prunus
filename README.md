@@ -147,6 +147,26 @@ BASE_URL=/app/     # 部署到 https://example.com/app/
 
 进程配置见 `deploy/ecosystem.config.cjs`，日志写入 `./logs/`。
 
+### 桌面版（Windows / macOS 安装包）
+
+Prunus 也能装成本地应用（Tauri 2，WebView2 / WKWebView 外壳）。会话数据仍然只在本机，
+大模型请求由 Rust 侧直接发出，不经过浏览器，因此不受 provider 的 CORS 限制。
+
+```bash
+npm install
+npm run desktop:dev      # 开发（热更）
+npm run desktop:build    # 出安装包
+```
+
+- Windows 产物：`src-tauri/target/release/bundle/nsis/Prunus_x.y.z_x64-setup.exe`
+- macOS：`npm run desktop:build:mac` → `.../bundle/dmg/*.dmg`（需在 macOS 上构建）
+
+前置工具链（Rust ≥ 1.90 + MSVC Build Tools / Xcode CLT）、路径定制、签名公证、
+以及桌面端与 Web 端的行为差异，全部写在 **[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md)**。
+
+> 桌面版只支持 BYOK：应用内填自己的 Base URL 与 API Key。`.env.local` 的服务端代理
+> 依赖 Vite dev server，桌面端没有它。
+
 ---
 
 ## 键盘快捷键

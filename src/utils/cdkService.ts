@@ -13,6 +13,8 @@
  * IP 上也能跑在域名上，换域名不需要重新构建。
  */
 
+import { appFetch, isDesktop } from './desktop';
+
 const RAW_COMMUNITY_API = (((import.meta as any).env?.VITE_COMMUNITY_API as string) || '').trim();
 
 function resolveCommunityApi(raw: string): string {
@@ -20,6 +22,11 @@ function resolveCommunityApi(raw: string): string {
   // 以 "/" 开头 = 同源，跟随当前站点的协议/主机/端口
   if (raw.startsWith('/')) {
     if (typeof window === 'undefined') return '';
+    // 桌面端没有「同源后端」这回事：页面 origin 是 tauri.localhost（Windows）/
+    // tauri://localhost（macOS/Linux），解析出来的地址永远打不通，而且它会把兑换码
+    // 入口显示成一个必然失败的按钮。判空 = 退回纯 BYOK 模式，与「没配 COMMUNITY_API」
+    // 走完全同一条分支（App.tsx 的配置闸门不需要任何改动）。
+    if (isDesktop()) return '';
     return window.location.origin + raw.replace(/\/+$/, '');
   }
   return raw.replace(/\/+$/, '');
@@ -55,7 +62,7 @@ export function communityV1Url(): string {
 
 /** 兑换码换 token */
 export async function redeemCdk(code: string): Promise<RedeemResult> {
-  const res = await fetch(`${COMMUNITY_API}/api/redeem`, {
+  const res = await appFetch(`${COMMUNITY_API}/api/redeem`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
@@ -93,7 +100,9 @@ export interface FreeTokenResult {
  * 前端与后端同源（生产用 Nginx 同域反代，开发用 Vite 的 /api 代理）。
  */
 export async function requestFreeToken(): Promise<FreeTokenResult> {
-  const res = await fetch(`${COMMUNITY_API}/api/anon`, { method: 'POST' });
+  // 桌面上 appFetch 不带 Cookie（Rust 侧没有 cookie jar），所以「靠 Cookie 认身份、
+  // 重复调用拿回同一个 token」在桌面端不成立 —— 桌面端只承诺 CDK 兑换码这条路。
+  const res = await appFetch(`${COMMUNITY_API}/api/anon`, { method: 'POST' });
   if (!res.ok) {
     let msg = `领取免费额度失败 (${res.status})`;
     try {
@@ -109,7 +118,7 @@ export async function requestFreeToken(): Promise<FreeTokenResult> {
 
 /** 查询某个 token 的额度 */
 export async function fetchQuota(token: string): Promise<QuotaInfo> {
-  const res = await fetch(`${COMMUNITY_API}/api/me`, {
+  const res = await appFetch(`${COMMUNITY_API}/api/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {

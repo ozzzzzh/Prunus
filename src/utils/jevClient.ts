@@ -12,6 +12,7 @@
 import type { PrunusNode } from '../types';
 import { htmlToPlainText } from './richtext';
 import { communityBaseUrl, hasCommunityBackend } from './cdkService';
+import { appFetch } from './desktop';
 
 /** 并发上限。太高会被上游限流，太低等太久 —— 8 是折中值，实测后可调。 */
 export const JEV_CONCURRENCY = 8;
@@ -52,7 +53,7 @@ async function requestJevProbability(
   query: string,
   signal?: AbortSignal
 ): Promise<number> {
-  const res = await fetch(`${communityBaseUrl()}/api/jev`, {
+  const res = await appFetch(`${communityBaseUrl()}/api/jev`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state, query }),

@@ -3,7 +3,7 @@ import { KeyRound, Ticket, Sparkles } from 'lucide-react';
 import { useAPIConfigStore, type LLMProtocol } from '../../store/apiConfigStore';
 import { redeemCdk, communityV1Url, hasCommunityBackend } from '../../utils/cdkService';
 import { cn } from '../../utils/cn';
-import logo from '../../assets/PrunusLogoHighQuality.jpg';
+import logo from '../../assets/PrunusLogoHighQuality.png';
 
 interface LLMSetupScreenProps {
   /**

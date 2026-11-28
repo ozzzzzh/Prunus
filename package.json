@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
-    "desktop:icons": "tauri icon src-tauri/app-icon.png",
+    "desktop:icons": "tauri icon src-tauri/app-icon.png && python scripts/rebuild-ico.py",
     "desktop:dev": "node scripts/desktop-run.mjs dev",
     "desktop:build": "node scripts/desktop-run.mjs build",
     "desktop:build:debug": "node scripts/desktop-run.mjs build --debug",

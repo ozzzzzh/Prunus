@@ -23,7 +23,7 @@ import { useAPIConfigStore } from './store/apiConfigStore';
 import { initPersistence, enableAutoSave } from './services/persistenceService';
 import { requestFreeToken, communityV1Url, hasCommunityBackend } from './utils/cdkService';
 import { cn } from './utils/cn';
-import logo from './assets/PrunusLogoHighQuality.jpg';
+import logo from './assets/PrunusLogoHighQuality.png';
 
 function App() {
   const sessions = useSessionStore(state => state.sessions);

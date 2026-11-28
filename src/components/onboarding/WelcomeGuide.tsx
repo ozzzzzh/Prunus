@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { GitBranch, Navigation, Lightbulb, ChevronLeft, ChevronRight, LayoutDashboard, Pencil } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import { cn } from '../../utils/cn';
-import logo from '../../assets/PrunusLogoHighQuality.jpg';
+import logo from '../../assets/PrunusLogoHighQuality.png';
 
 interface GuideStep {
   icon: typeof GitBranch;

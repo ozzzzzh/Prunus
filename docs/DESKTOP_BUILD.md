@@ -114,8 +114,18 @@ macOS 上没法交叉出 dmg —— `.dmg` 必须在 macOS 机器上打。Window
 `%USERPROFILE%\.cargo\bin` 是否在 PATH 里，不在就临时前置（只影响本进程树，不改系统设置）。
 这不是洁癖 —— 见 §8 第 2 条，这个坑的表现是「明明装了 Rust，却报 program not found」。
 
-图标源图由 `python scripts/make-app-icon.py` 从 `src/assets/PrunusLogoHighQuality.jpg`
-生成（居中裁方 + 1024×1024）。换 logo 时重跑这两条命令。
+图标源图由 `python scripts/make-app-icon.py` 从 `src/assets/PrunusLogoHighQuality.png`
+生成（居中裁方 → 1024×1024）：
+
+- **默认保留透明底**（源图本身就是透明剪贴画），图标是「漂浮的树」，没有白底方块。
+- `--flatten`（可配 `--bg RRGGBB`）把透明底合成到纯色，得到白底方块版。
+- 换 logo 时跑这两条：`python scripts/make-app-icon.py` → `npm run desktop:icons`。
+- `desktop:icons` 是 `tauri icon` + `scripts/rebuild-ico.py` 两步。第二步不是可有可无：
+  `tauri icon` 生成的 ico **每个尺寸都用 PNG 压缩**，而 Windows 的约定是只有 256 用 PNG、
+  256 以下用 32bpp DIB。小尺寸 PNG 帧在 Explorer 里能显示，但在部分老旧 shell 面
+  （系统对话框、Windows Installer 的图标列、第三方工具）会退化成没有 alpha 的位图 ——
+  表现就是「图标忽然有了白底」。重新组装后是 16–128 DIB + 256 PNG，9 帧全带 alpha。
+- ⚠ 换完图标**必须重新打包**，而且要注意 §8 第 10 条那个缓存坑（脚本已自动处理）。
 
 ---
 
@@ -259,6 +269,28 @@ pdf.js 的 WASM 解码（JBIG2/JPEG2000）；`worker-src blob:` 是 pdf.js worke
 9. **`yarn.lock` 与 `package-lock.json` 同时在库**
    老问题（见 `HANDOFF.md` §7.3）。`npm install` 会顺手改写 `yarn.lock`，制造上千行无意义 diff。
    桌面构建一律用 npm。
+10. **换了图标，但 exe 里还是旧图标**
+   链路是这样的：`tauri-build` 生成 `resource.rc`（内容就一行 `32512 ICON "<icon.ico 绝对路径>"`）
+   → winres 用 rc.exe 编译成 `resource.lib` → 链接进 exe。两个缓存叠加导致图标换了也不重编：
+   `.rc` 的内容只跟路径和版本号有关，换图标它一个字都不变，所以不重写；`.lib` 又比 `.rc` 新，
+   winres 认为不必重编。**NSIS 那边反而正常**，因为它直接读 `icon.ico`，不走 rc.exe ——
+   于是出现「安装包图标是新的、装出来的程序图标是旧的」这种最迷惑的组合。
+   `desktop:*` 脚本已内置脏检查（图标比 exe 新就清掉该 profile 的 `build/prunus*` 并 touch
+   `build.rs`）。要手动修：
+   ```powershell
+   Remove-Item -Recurse -Force src-tauri\target\release\build\prunus*
+   (Get-Item src-tauri\build.rs).LastWriteTime = Get-Date
+   npm run desktop:build:nsis
+   ```
+   验证是否真的嵌进去了（`.NET` 的 `ExtractAssociatedIcon` 会把 alpha 丢成 255，不可信，
+   必须直接读 PE 的 RT_ICON）：
+   ```powershell
+   python scripts/check-embedded-icon.py src-tauri\target\release\prunus.exe --png icon-on-magenta.png
+   ```
+   每帧的 `alpha=0/255` 表示带透明通道；把渲染出来的 PNG 打开，透明区域是洋红。
+   ⚠ 另外注意：**浅色主题下透明底和白色底看起来一模一样**（Explorer 把透明合成到白色），
+   所以「图标还是白底」这种感觉，光看桌面分辨不出是真透明还是真白底，必须用上面这条命令或
+   换成深色背景看。
 
 ---
 

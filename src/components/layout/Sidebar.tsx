@@ -31,7 +31,7 @@ import { cn } from '../../utils/cn';
 import { serializeSession, sessionTitleToFileName } from '../../utils/sessionTransfer';
 import { createPromptSession } from '../../utils/promptSession';
 import type { TreeNode, FolderItem } from '../../types';
-import logo from '../../assets/PrunusLogoHighQuality.jpg';
+import logo from '../../assets/PrunusLogoHighQuality.png';
 
 export default function Sidebar() {
   const [contextMenu, setContextMenu] = useState<{

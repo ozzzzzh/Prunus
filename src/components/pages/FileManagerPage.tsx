@@ -30,7 +30,7 @@ import { cn } from '../../utils/cn';
 import { parseSessionFile, resolveImport } from '../../utils/sessionTransfer';
 import { createPromptSession } from '../../utils/promptSession';
 import type { FolderItem } from '../../types';
-import logo from '../../assets/PrunusLogoHighQuality.jpg';
+import logo from '../../assets/PrunusLogoHighQuality.png';
 
 type ViewMode = 'grid' | 'list';
 type SortMode = 'name' | 'date';
